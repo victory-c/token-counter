@@ -1,0 +1,4 @@
+timestamp,model,request_type,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,session_id,project_path
+2026-04-10T12:00:00Z,claude-sonnet-4,agent,1000,200,5000,0,0.10,s1,/Users/v/proj
+2026-04-11T13:00:00Z,Auto,chat,500,100,0,0,0.02,s2,/Users/v/proj
+2026-04-12T13:00:00Z,Auto,agent,,,,,0.40,s3,/Users/v/proj

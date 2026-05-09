@@ -1,0 +1,330 @@
+# TokenBurn API-equivalent pricing table.
+#
+# Each row is the public list price for the model, effective_date is the
+# first day on which the row applies. Lookup picks the latest row with
+# effective_date <= event timestamp.
+#
+# Update this file when a vendor changes prices. Always include source_url
+# so the row is auditable. All values in USD per 1,000,000 tokens.
+
+prices:
+  # ---------------- Anthropic / Claude ----------------
+  - provider: claude_code
+    model: claude-3-5-sonnet
+    effective_date: 2024-06-20
+    input_per_million_usd: 3.00
+    output_per_million_usd: 15.00
+    cache_write_per_million_usd: 3.75
+    cache_read_per_million_usd: 0.30
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-3-5-haiku
+    effective_date: 2024-11-04
+    input_per_million_usd: 0.80
+    output_per_million_usd: 4.00
+    cache_write_per_million_usd: 1.00
+    cache_read_per_million_usd: 0.08
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-3-opus
+    effective_date: 2024-03-01
+    input_per_million_usd: 15.00
+    output_per_million_usd: 75.00
+    cache_write_per_million_usd: 18.75
+    cache_read_per_million_usd: 1.50
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-sonnet-4
+    effective_date: 2025-05-01
+    input_per_million_usd: 3.00
+    output_per_million_usd: 15.00
+    cache_write_per_million_usd: 3.75
+    cache_read_per_million_usd: 0.30
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-opus-4
+    effective_date: 2025-05-01
+    input_per_million_usd: 15.00
+    output_per_million_usd: 75.00
+    cache_write_per_million_usd: 18.75
+    cache_read_per_million_usd: 1.50
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-haiku-4-5
+    effective_date: 2025-10-01
+    input_per_million_usd: 1.00
+    output_per_million_usd: 5.00
+    cache_write_per_million_usd: 1.25
+    cache_read_per_million_usd: 0.10
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-sonnet-4-6
+    effective_date: 2025-10-15
+    input_per_million_usd: 3.00
+    output_per_million_usd: 15.00
+    cache_write_per_million_usd: 3.75
+    cache_read_per_million_usd: 0.30
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-opus-4-6
+    effective_date: 2025-10-15
+    input_per_million_usd: 15.00
+    output_per_million_usd: 75.00
+    cache_write_per_million_usd: 18.75
+    cache_read_per_million_usd: 1.50
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-opus-4-7
+    effective_date: 2026-01-15
+    input_per_million_usd: 15.00
+    output_per_million_usd: 75.00
+    cache_write_per_million_usd: 18.75
+    cache_read_per_million_usd: 1.50
+    source_url: https://www.anthropic.com/pricing
+
+  # ---------------- OpenAI / Codex ----------------
+  - provider: codex
+    model: gpt-5
+    effective_date: 2025-08-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 1.25
+    cache_read_per_million_usd: 0.125
+    source_url: https://openai.com/api/pricing/
+
+  - provider: codex
+    model: gpt-5.4
+    effective_date: 2026-01-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 1.25
+    cache_read_per_million_usd: 0.125
+    source_url: https://openai.com/api/pricing/
+
+  - provider: codex
+    model: o1
+    effective_date: 2024-12-17
+    input_per_million_usd: 15.00
+    output_per_million_usd: 60.00
+    cache_write_per_million_usd: 15.00
+    cache_read_per_million_usd: 7.50
+    source_url: https://openai.com/api/pricing/
+
+  - provider: codex
+    model: gpt-5.4-mini
+    effective_date: 2026-01-01
+    input_per_million_usd: 0.25
+    output_per_million_usd: 2.00
+    cache_write_per_million_usd: 0.25
+    cache_read_per_million_usd: 0.025
+    source_url: https://openai.com/api/pricing/
+
+  - provider: codex
+    model: gpt-5.5
+    effective_date: 2026-03-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 1.25
+    cache_read_per_million_usd: 0.125
+    source_url: https://openai.com/api/pricing/
+
+  - provider: codex
+    model: gpt-5.3-codex
+    effective_date: 2025-09-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 1.25
+    cache_read_per_million_usd: 0.125
+    source_url: https://openai.com/api/pricing/
+
+  # ---------------- Cursor (when underlying model is exposed) ----------------
+  # NOTE: Cursor's actual credit cost per request is opaque. These are *retail
+  # API-equivalent* rates from the upstream vendor (Anthropic/OpenAI/Google) for
+  # the model the request was routed to — i.e. "what would you pay if you called
+  # this directly via API". Cursor-internal models (composer-*, cursor-auto)
+  # stay at zero because their underlying model is not disclosed.
+
+  - provider: cursor
+    model: cursor-auto
+    effective_date: 2024-01-01
+    input_per_million_usd: 0.0
+    output_per_million_usd: 0.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.0
+    source_url: https://www.cursor.com/pricing
+
+  - provider: cursor
+    model: composer-1.5
+    effective_date: 2025-09-01
+    input_per_million_usd: 0.0
+    output_per_million_usd: 0.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.0
+    source_url: https://www.cursor.com/pricing
+
+  - provider: cursor
+    model: composer-2
+    effective_date: 2025-12-01
+    input_per_million_usd: 0.0
+    output_per_million_usd: 0.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.0
+    source_url: https://www.cursor.com/pricing
+
+  - provider: cursor
+    model: composer-2-fast
+    effective_date: 2025-12-01
+    input_per_million_usd: 0.0
+    output_per_million_usd: 0.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.0
+    source_url: https://www.cursor.com/pricing
+
+  # Cursor-routed Anthropic Opus variants → Opus list price
+  - provider: cursor
+    model: claude-4.5-opus-high-thinking
+    effective_date: 2025-10-15
+    input_per_million_usd: 15.00
+    output_per_million_usd: 75.00
+    cache_write_per_million_usd: 18.75
+    cache_read_per_million_usd: 1.50
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: cursor
+    model: claude-4.6-opus-high-thinking
+    effective_date: 2025-10-15
+    input_per_million_usd: 15.00
+    output_per_million_usd: 75.00
+    cache_write_per_million_usd: 18.75
+    cache_read_per_million_usd: 1.50
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: cursor
+    model: claude-opus-4-7-thinking-xhigh
+    effective_date: 2026-01-15
+    input_per_million_usd: 15.00
+    output_per_million_usd: 75.00
+    cache_write_per_million_usd: 18.75
+    cache_read_per_million_usd: 1.50
+    source_url: https://www.anthropic.com/pricing
+
+  # Cursor-routed Anthropic Sonnet → Sonnet list price
+  - provider: cursor
+    model: claude-4.5-sonnet-thinking
+    effective_date: 2025-10-15
+    input_per_million_usd: 3.00
+    output_per_million_usd: 15.00
+    cache_write_per_million_usd: 3.75
+    cache_read_per_million_usd: 0.30
+    source_url: https://www.anthropic.com/pricing
+
+  # Cursor-routed OpenAI GPT-5 variants → GPT-5 list price
+  - provider: cursor
+    model: gpt-5.2-codex
+    effective_date: 2025-10-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 1.25
+    cache_read_per_million_usd: 0.125
+    source_url: https://openai.com/api/pricing/
+
+  - provider: cursor
+    model: gpt-5.3-codex
+    effective_date: 2025-12-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 1.25
+    cache_read_per_million_usd: 0.125
+    source_url: https://openai.com/api/pricing/
+
+  - provider: cursor
+    model: gpt-5.5-medium
+    effective_date: 2026-03-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 1.25
+    cache_read_per_million_usd: 0.125
+    source_url: https://openai.com/api/pricing/
+
+  # Cursor-routed Gemini → Gemini Pro list price
+  - provider: cursor
+    model: gemini-3.1-pro-preview
+    effective_date: 2026-04-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 0.3125
+    cache_read_per_million_usd: 0.3125
+    source_url: https://ai.google.dev/pricing
+
+  # Local/BYOK models routed via Cursor — user already pays via their own infra
+  - provider: cursor
+    model: qwen2.5-coder:32b
+    effective_date: 2024-01-01
+    input_per_million_usd: 0.0
+    output_per_million_usd: 0.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.0
+    source_url: local
+
+  - provider: cursor
+    model: qwen-coder-32b
+    effective_date: 2024-01-01
+    input_per_million_usd: 0.0
+    output_per_million_usd: 0.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.0
+    source_url: local
+
+  - provider: cursor
+    model: deepseek-r1
+    effective_date: 2024-01-01
+    input_per_million_usd: 0.0
+    output_per_million_usd: 0.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.0
+    source_url: local
+
+  # ---------------- Google / Gemini ----------------
+  - provider: gemini
+    model: gemini-1.5-pro
+    effective_date: 2024-05-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 5.00
+    cache_write_per_million_usd: 0.3125
+    cache_read_per_million_usd: 0.3125
+    source_url: https://ai.google.dev/pricing
+
+  - provider: gemini
+    model: gemini-1.5-flash
+    effective_date: 2024-05-01
+    input_per_million_usd: 0.075
+    output_per_million_usd: 0.30
+    cache_write_per_million_usd: 0.01875
+    cache_read_per_million_usd: 0.01875
+    source_url: https://ai.google.dev/pricing
+
+  - provider: gemini
+    model: gemini-2.0-flash
+    effective_date: 2025-02-01
+    input_per_million_usd: 0.10
+    output_per_million_usd: 0.40
+    cache_write_per_million_usd: 0.025
+    cache_read_per_million_usd: 0.025
+    source_url: https://ai.google.dev/pricing
+
+  - provider: gemini
+    model: gemini-2.5-pro
+    effective_date: 2025-04-01
+    input_per_million_usd: 1.25
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 0.3125
+    cache_read_per_million_usd: 0.3125
+    source_url: https://ai.google.dev/pricing

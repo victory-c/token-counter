@@ -1,0 +1,5 @@
+timestamp,model,request_type,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,session_id,project_path
+2026-04-10T12:33:00-07:00,claude-sonnet-4,agent,42000,1200,300000,0,0.92,sess_001,/Users/victorchun/example-app
+2026-04-11T09:15:00-07:00,Auto,chat,18000,800,0,0,0.05,sess_002,/Users/victorchun/example-app
+2026-04-12T18:00:00-07:00,gpt-5,agent,33500,2400,150000,0,0.61,sess_003,/Users/victorchun/another-project
+2026-04-15T22:10:00-07:00,Auto,agent,,,,,0.32,sess_004,/Users/victorchun/example-app

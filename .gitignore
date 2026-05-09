@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Testing / linting caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# TokenBurn runtime artifacts (user data — not for the repo)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.tokenburn/
+~/.tokenburn/
+
+# Local imports the user might drop next to the repo
+imports/
+
+# Editor-specific scratch
+*.bak
+*.orig
