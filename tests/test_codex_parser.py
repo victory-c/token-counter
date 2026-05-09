@@ -37,6 +37,11 @@ def test_codex_uses_last_token_usage_when_present(tmp_app_config):
 
     # Third: only total_token_usage; falls back and labels confidence
     assert by_ts[2].confidence is Confidence.ESTIMATED_FROM_SESSION_SUMMARY
+    assert by_ts[2].input_tokens == 800
+    assert by_ts[2].output_tokens == 150
+    assert by_ts[2].cache_read_tokens == 700
+    assert by_ts[2].reasoning_tokens == 80
+    assert by_ts[2].total_tokens == 950
 
 
 def test_codex_id_is_deterministic(tmp_app_config):

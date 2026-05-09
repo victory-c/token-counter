@@ -12,8 +12,9 @@ from rich.table import Table
 
 from ..config import expand
 from ..models import Confidence, DateRange, UsageEvent
+from ..privacy import project_identity
 from ..util.dates import local_date, parse_iso
-from ..util.hashing import event_id, hash_path
+from ..util.hashing import event_id
 from ..util.paths import decode_claude_project_dir
 from .base import DiscoveredSource, ProviderAdapter
 
@@ -90,8 +91,7 @@ class ClaudeCodeAdapter(ProviderAdapter):
                     continue
 
                 cwd = rec.get("cwd") or project_path_fallback
-                project_path = cwd
-                project_hash = hash_path(project_path) if privacy.hash_project_paths else None
+                project_path, project_hash = project_identity(cwd, privacy)
 
                 input_tokens = int(usage.get("input_tokens") or 0)
                 output_tokens = int(usage.get("output_tokens") or 0)
@@ -175,10 +175,7 @@ def reconcile_with_ccusage(db, range_: DateRange, console: Console) -> None:
         )
     )
     native = int(rows[0]["native_total"]) if rows else 0
-    if cc_total == 0:
-        delta_pct = 0.0
-    else:
-        delta_pct = abs(native - cc_total) / cc_total * 100
+    delta_pct = 0.0 if cc_total == 0 else abs(native - cc_total) / cc_total * 100
 
     table = Table(title="Claude Code reconciliation")
     table.add_column("Source")

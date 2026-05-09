@@ -61,6 +61,33 @@ def test_build_summary_aggregates_across_providers(tmp_path, tmp_app_config):
     providers = {r["provider"]: r for r in summary["by_provider"]}
     assert providers["claude_code"]["tokens"] == 5200
     assert providers["codex"]["tokens"] == 580
+    assert summary["subscription_total_usd"] == 80
+
+    codex_summary = build_summary(
+        db,
+        DateRange(start=date(2026, 4, 1), end=date(2026, 4, 30)),
+        cfg,
+        provider_filter="codex",
+    )
+    assert codex_summary["subscription_total_usd"] == 20
+    assert codex_summary["value_multiple"] == 0.05 / 20
+
+
+def test_build_summary_groups_hashed_projects(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    upsert_events(
+        db,
+        [
+            _make_event(id="a", project_path=None, project_hash="abc123", session_id="s1"),
+            _make_event(id="b", project_path=None, project_hash="abc123", session_id="s2"),
+        ],
+    )
+    summary = build_summary(db, DateRange(start=date(2026, 4, 1), end=date(2026, 4, 30)), cfg)
+
+    assert summary["by_project"][0]["project_path"] == "hash:abc123"
+    assert summary["by_project"][0]["tokens"] == 10400
+    assert summary["by_project"][0]["sessions"] == 2
 
 
 def test_markdown_export_contains_headers(tmp_path, tmp_app_config):

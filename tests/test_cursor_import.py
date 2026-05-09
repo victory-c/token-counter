@@ -38,3 +38,33 @@ def test_cursor_csv_import_handles_auto_and_cost_only(tmp_app_config):
     assert s3.output_tokens is None
     assert s3.billed_cost_usd == 0.40
     assert s3.confidence is Confidence.MANUAL_IMPORT
+
+
+def test_cursor_import_redacts_project_paths(tmp_app_config):
+    cfg, _ = tmp_app_config
+    cfg.privacy.redact_project_paths = True
+    csv_path = Path(__file__).parent / "fixtures" / "cursor" / "april.csv"
+    pcfg = ProviderConfig(enabled=True, source="manual_import", import_dir=str(csv_path.parent))
+    adapter = CursorAdapter(cfg, pcfg)
+    src = DiscoveredSource(provider="cursor", path=csv_path, kind="manual_import", exists=True)
+    range_ = DateRange(start=date(2026, 4, 1), end=date(2026, 4, 30))
+    events = list(adapter.parse(src, range_))
+
+    assert events
+    assert {e.project_path for e in events} == {None}
+    assert {e.project_hash for e in events} == {None}
+
+
+def test_cursor_import_hashes_project_paths_without_storing_raw_path(tmp_app_config):
+    cfg, _ = tmp_app_config
+    cfg.privacy.hash_project_paths = True
+    csv_path = Path(__file__).parent / "fixtures" / "cursor" / "april.csv"
+    pcfg = ProviderConfig(enabled=True, source="manual_import", import_dir=str(csv_path.parent))
+    adapter = CursorAdapter(cfg, pcfg)
+    src = DiscoveredSource(provider="cursor", path=csv_path, kind="manual_import", exists=True)
+    range_ = DateRange(start=date(2026, 4, 1), end=date(2026, 4, 30))
+    events = list(adapter.parse(src, range_))
+
+    assert events
+    assert {e.project_path for e in events} == {None}
+    assert all(e.project_hash for e in events)

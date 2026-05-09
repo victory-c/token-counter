@@ -7,9 +7,22 @@ from pathlib import Path
 
 from ..config import expand
 from ..models import Confidence, DateRange, UsageEvent
+from ..privacy import project_identity
 from ..util.dates import local_date, parse_iso
-from ..util.hashing import event_id, hash_path
+from ..util.hashing import event_id
 from .base import DiscoveredSource, ProviderAdapter
+
+_USAGE_FIELDS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "total_tokens",
+)
+
+
+def _usage_counts(raw: dict) -> dict[str, int]:
+    return {field: int(raw.get(field, 0) or 0) for field in _USAGE_FIELDS}
 
 
 class CodexAdapter(ProviderAdapter):
@@ -51,7 +64,7 @@ class CodexAdapter(ProviderAdapter):
     def _parse_file(self, path: Path, range_: DateRange, tz: str, privacy) -> Iterator[UsageEvent]:
         current_model: str | None = None
         current_cwd: str | None = None
-        prev_total = 0
+        prev_usage = {field: 0 for field in _USAGE_FIELDS}
         line_no = 0
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             for raw_line in fh:
@@ -78,25 +91,29 @@ class CodexAdapter(ProviderAdapter):
                 info = payload.get("info") or {}
                 last = info.get("last_token_usage")
                 cumulative = info.get("total_token_usage") or {}
+                cumulative_usage = _usage_counts(cumulative)
 
                 if last:
                     delta = last
                     confidence = Confidence.EXACT_FROM_LOCAL_LOG
                 else:
-                    cur_total = int(cumulative.get("total_tokens", 0))
-                    diff = cur_total - prev_total
-                    if diff < 0:
-                        prev_total = 0
-                        diff = cur_total
+                    baseline = prev_usage
+                    if cumulative_usage["total_tokens"] < prev_usage["total_tokens"]:
+                        baseline = {field: 0 for field in _USAGE_FIELDS}
                     delta = {
-                        "input_tokens": int(cumulative.get("input_tokens", 0)),
-                        "cached_input_tokens": int(cumulative.get("cached_input_tokens", 0)),
-                        "output_tokens": int(cumulative.get("output_tokens", 0)),
-                        "reasoning_output_tokens": int(cumulative.get("reasoning_output_tokens", 0)),
-                        "total_tokens": diff,
+                        field: max(cumulative_usage[field] - baseline[field], 0)
+                        for field in _USAGE_FIELDS
                     }
                     confidence = Confidence.ESTIMATED_FROM_SESSION_SUMMARY
-                    prev_total = cur_total
+
+                if cumulative:
+                    prev_usage = cumulative_usage
+                elif last:
+                    last_usage = _usage_counts(last)
+                    prev_usage = {
+                        field: prev_usage[field] + last_usage[field]
+                        for field in _USAGE_FIELDS
+                    }
 
                 ts_raw = rec.get("timestamp")
                 if not ts_raw:
@@ -111,8 +128,7 @@ class CodexAdapter(ProviderAdapter):
                 reasoning = int(delta.get("reasoning_output_tokens", 0))
                 total = int(delta.get("total_tokens", input_tokens + output_tokens))
 
-                project = current_cwd
-                project_hash = hash_path(project) if (privacy.hash_project_paths and project) else None
+                project, project_hash = project_identity(current_cwd, privacy)
 
                 yield UsageEvent(
                     id=event_id("codex", str(path), str(line_no), ts_raw),

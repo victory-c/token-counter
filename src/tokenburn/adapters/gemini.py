@@ -6,8 +6,9 @@ from pathlib import Path
 
 from ..config import expand
 from ..models import Confidence, DateRange, UsageEvent
+from ..privacy import project_identity
 from ..util.dates import local_date, parse_iso
-from ..util.hashing import event_id, hash_path
+from ..util.hashing import event_id
 from .base import DiscoveredSource, ProviderAdapter
 
 
@@ -43,10 +44,7 @@ class GeminiAdapter(ProviderAdapter):
         tz = self.app_config.timezone
         privacy = self.app_config.privacy
         path = source.path
-        if path.is_dir():
-            files = sorted(path.glob("*.jsonl"))
-        else:
-            files = [path]
+        files = sorted(path.glob("*.jsonl")) if path.is_dir() else [path]
         for f in files:
             yield from self._parse_jsonl(f, range_, tz, privacy)
 
@@ -80,7 +78,7 @@ class GeminiAdapter(ProviderAdapter):
                 total = int(total_meta) if total_meta is not None else (input_tokens + output_tokens + cache_read)
 
                 project = rec.get("project_path") or rec.get("cwd")
-                project_hash = hash_path(project) if (privacy.hash_project_paths and project) else None
+                project, project_hash = project_identity(project, privacy)
 
                 yield UsageEvent(
                     id=event_id("gemini", str(path), str(line_no)),

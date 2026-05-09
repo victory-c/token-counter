@@ -72,6 +72,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_events(model)",
     "CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_events(project_path)",
+    "CREATE INDEX IF NOT EXISTS idx_usage_project_hash ON usage_events(project_hash)",
 ]
 
 

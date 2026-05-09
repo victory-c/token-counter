@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
+import tokenburn
 from tokenburn.models import Confidence, UsageEvent
 from tokenburn.pricing import PricingTable, default_pricing_path, estimate_cost
 
@@ -45,6 +47,24 @@ def test_estimate_cost_handles_all_token_dimensions():
     assert abs(cost - 22.05) < 1e-6
 
 
+def test_estimate_cost_does_not_double_charge_reasoning_tokens():
+    table = PricingTable.load(default_pricing_path())
+    e = UsageEvent(
+        id="x",
+        provider="claude_code",
+        tool="claude_code",
+        timestamp_start=datetime(2026, 4, 15),
+        timezone="UTC",
+        source_type="local_jsonl",
+        source_parser="claude_native_jsonl",
+        confidence=Confidence.EXACT_FROM_LOCAL_LOG,
+        model="claude-sonnet-4",
+        output_tokens=1_000_000,
+        reasoning_tokens=1_000_000,
+    )
+    assert estimate_cost(e, table) == 15.0
+
+
 def test_estimate_cost_unknown_model_returns_none():
     table = PricingTable.load(default_pricing_path())
     e = UsageEvent(
@@ -60,3 +80,8 @@ def test_estimate_cost_unknown_model_returns_none():
         input_tokens=10,
     )
     assert estimate_cost(e, table) is None
+
+
+def test_packaged_pricing_file_exists():
+    assert default_pricing_path().exists()
+    assert (Path(tokenburn.__file__).with_name("pricing.yaml")).exists()

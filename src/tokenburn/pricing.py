@@ -92,17 +92,18 @@ def estimate_cost(event: UsageEvent, table: PricingTable) -> float | None:
     cost += (event.output_tokens or 0) / 1_000_000 * row.output_per_million_usd
     cost += (event.cache_creation_tokens or 0) / 1_000_000 * row.cache_write_per_million_usd
     cost += (event.cache_read_tokens or 0) / 1_000_000 * row.cache_read_per_million_usd
-    # Reasoning tokens are billed as output by major vendors (OpenAI o-series, Gemini thinking).
-    cost += (event.reasoning_tokens or 0) / 1_000_000 * row.output_per_million_usd
     return round(cost, 6)
 
 
 def default_pricing_path() -> Path:
-    """Look for pricing.yaml in the package root (alongside pyproject.toml)."""
+    """Look for pricing.yaml in source checkouts, wheels, then user config."""
     pkg_root = Path(__file__).resolve().parents[2]
-    candidate = pkg_root / "pricing.yaml"
-    if candidate.exists():
-        return candidate
-    # Fallback to user config dir
-    user_copy = Path.home() / ".tokenburn" / "pricing.yaml"
-    return user_copy
+    candidates = [
+        pkg_root / "pricing.yaml",
+        Path(__file__).resolve().with_name("pricing.yaml"),
+        Path.home() / ".tokenburn" / "pricing.yaml",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[-1]

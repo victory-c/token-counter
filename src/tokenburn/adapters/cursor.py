@@ -7,8 +7,9 @@ from pathlib import Path
 
 from ..config import expand
 from ..models import Confidence, DateRange, UsageEvent
+from ..privacy import project_identity
 from ..util.dates import local_date, parse_iso
-from ..util.hashing import event_id, hash_path
+from ..util.hashing import event_id
 from .base import DiscoveredSource, ProviderAdapter
 
 REQUIRED_COLUMNS = {"timestamp", "model"}
@@ -132,7 +133,7 @@ class CursorAdapter(ProviderAdapter):
             total = (input_tokens or 0) + (output_tokens or 0) + (cache_read or 0) + (cache_write or 0)
 
         project = row.get("project_path") or None
-        project_hash = hash_path(project) if (privacy.hash_project_paths and project) else None
+        project, project_hash = project_identity(project, privacy)
 
         return UsageEvent(
             id=event_id("cursor", str(path), str(line_no), str(ts_raw), raw_model),

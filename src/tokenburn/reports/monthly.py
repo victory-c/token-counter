@@ -10,6 +10,16 @@ from ..models import DateRange
 from ..util.paths import redact_home
 
 
+def _subscription_total(cfg: AppConfig, provider_filter: str | None) -> float:
+    if provider_filter is None:
+        return sum(s.monthly_cost_usd for s in cfg.subscriptions.values())
+    return sum(
+        s.monthly_cost_usd
+        for s in cfg.subscriptions.values()
+        if provider_filter in s.providers
+    )
+
+
 def build_summary(db, range_: DateRange, cfg: AppConfig, provider_filter: str | None = None) -> dict[str, Any]:
     where_provider = "AND provider = :p" if provider_filter else ""
     params = {"s": range_.start.isoformat(), "e": range_.end.isoformat()}
@@ -77,13 +87,21 @@ def build_summary(db, range_: DateRange, cfg: AppConfig, provider_filter: str | 
     by_project = list(
         db.query(
             f"""
-            SELECT provider, project_path,
+            SELECT provider,
+                   MIN(CASE
+                       WHEN project_path IS NOT NULL THEN project_path
+                       ELSE 'hash:' || project_hash
+                   END) AS project_path,
+                   MAX(project_hash) AS project_hash,
                    COALESCE(SUM(total_tokens),0) AS tokens,
                    COALESCE(SUM(estimated_cost_usd),0) AS cost,
                    COUNT(DISTINCT session_id) AS sessions
             FROM usage_events
-            WHERE {base_where} AND project_path IS NOT NULL
-            GROUP BY provider, project_path
+            WHERE {base_where} AND (project_path IS NOT NULL OR project_hash IS NOT NULL)
+            GROUP BY provider, CASE
+                WHEN project_path IS NOT NULL THEN 'path:' || project_path
+                ELSE 'hash:' || project_hash
+            END
             ORDER BY tokens DESC
             LIMIT 20
             """,
@@ -94,7 +112,9 @@ def build_summary(db, range_: DateRange, cfg: AppConfig, provider_filter: str | 
     top_sessions = list(
         db.query(
             f"""
-            SELECT provider, session_id, project_path,
+            SELECT provider, session_id,
+                   COALESCE(MAX(project_path), 'hash:' || MAX(project_hash)) AS project_path,
+                   MAX(project_hash) AS project_hash,
                    COALESCE(SUM(total_tokens),0) AS tokens,
                    COALESCE(SUM(estimated_cost_usd),0) AS cost,
                    COUNT(*) AS events
@@ -123,7 +143,7 @@ def build_summary(db, range_: DateRange, cfg: AppConfig, provider_filter: str | 
         )
     )
 
-    subscription_total = sum(s.monthly_cost_usd for s in cfg.subscriptions.values())
+    subscription_total = _subscription_total(cfg, provider_filter)
     api_eq = float(totals.get("estimated_cost_usd") or 0.0)
     multiple = (api_eq / subscription_total) if subscription_total else None
 
