@@ -19,6 +19,42 @@ uv run tokenburn report --month 2026-04
 uv run tokenburn export --month 2026-04 --format markdown --output report.md
 ```
 
+## Task classification & right-sizing (v0.2)
+
+Dollar totals hide the real waste: most token spend goes to jobs that didn't need
+the strongest model. TokenBurn classifies each session into a task category
+(extraction, summarization, code-review, feature-implementation, debugging, …)
+and tells you which categories are over-served.
+
+```bash
+# Classify Claude + Codex sessions (heuristic, no API calls).
+uv run tokenburn classify --month 2026-04
+
+# By-task breakdown alongside the regular report.
+uv run tokenburn report --month 2026-04 --by-task
+
+# Right-sizing recommendations: where Opus runs do work Sonnet would handle, etc.
+uv run tokenburn savings --month 2026-04
+
+# Explain how one session was classified.
+uv run tokenburn task-detail --session SESS_ID
+
+# Override a misclassified session.
+uv run tokenburn override --session SESS_ID --provider claude_code --category extraction
+```
+
+The classifier is a heuristic decision tree (no LLM calls, no API keys, fully
+local). It reads the same `~/.claude/projects/**/*.jsonl` and `~/.codex/sessions`
+files the parsers do, extracts session-level signals (tool-call counts, file
+extensions touched, message patterns), and scores each task category. Ties
+break in favor of explainability — when a session looks misclassified, run
+`tokenburn task-detail` to see the exact signals and rules that fired, edit
+`src/tokenburn/classifier/heuristic.py`, and re-run.
+
+Cursor and Gemini events appear as `unclassified` because the dashboard CSV
+and API metadata don't carry conversation content; without that signal,
+classification would be guessing.
+
 ## Providers
 
 | Provider | Mode | Source |

@@ -1,6 +1,6 @@
 [project]
 name = "tokenburn"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first CLI that audits monthly AI coding-agent token usage across Claude Code, Codex, Cursor, and Gemini."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,7 +33,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tokenburn"]
-artifacts = ["src/tokenburn/pricing.yaml"]
+artifacts = [
+    "src/tokenburn/pricing.yaml",
+    "src/tokenburn/classifier/model_classes.yaml",
+    "src/tokenburn/classifier/task_fitness.yaml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

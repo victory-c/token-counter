@@ -128,6 +128,34 @@ def doctor(
     npx = shutil.which("npx")
     table.add_row("npx binary", "[green]found[/green]" if npx else "[dim]not found[/dim]", npx or "")
 
+    # Classifier coverage: how many distinct (provider, session_id) sessions
+    # in usage_events have a classification row?
+    db = open_db(db_path)
+    coverage = next(iter(db.query("""
+        SELECT
+            COUNT(DISTINCT e.provider || ':' || e.session_id) AS sessions_total,
+            COUNT(DISTINCT CASE WHEN c.task_category IS NOT NULL
+                                THEN e.provider || ':' || e.session_id END) AS sessions_classified
+        FROM usage_events e
+        LEFT JOIN session_classifications c
+            ON c.session_id = e.session_id AND c.provider = e.provider
+        WHERE e.session_id IS NOT NULL
+          AND e.provider IN ('claude_code', 'codex')
+    """)), {})
+    total = int(coverage.get("sessions_total") or 0)
+    classified = int(coverage.get("sessions_classified") or 0)
+    if total > 0:
+        pct = int(classified / total * 100)
+        status = "[green]ok[/green]" if classified == total else "[yellow]partial[/yellow]"
+        table.add_row(
+            "classifier coverage",
+            status,
+            f"{classified}/{total} sessions classified ({pct}%) — Claude+Codex"
+            + (" — run `tokenburn classify`" if classified < total else ""),
+        )
+    else:
+        table.add_row("classifier coverage", "[dim]n/a[/dim]", "no Claude/Codex events ingested yet")
+
     console.print(table)
 
 
@@ -185,6 +213,7 @@ def report(
     frm: str | None = typer.Option(None, "--from", help="YYYY-MM-DD"),
     to: str | None = typer.Option(None, "--to", help="YYYY-MM-DD"),
     provider: str | None = typer.Option(None, "--provider", help="Limit to one provider"),
+    by_task: bool = typer.Option(False, "--by-task", help="Add a per-task breakdown (requires `tokenburn classify` to have run)"),
     config: Path | None = typer.Option(None, help="Config path"),
     no_scan: bool = typer.Option(False, "--no-scan", help="Skip re-scanning sources; query DB only"),
 ) -> None:
@@ -217,6 +246,18 @@ def report(
 
     from .reports.monthly import render_monthly_report
     render_monthly_report(db, rng, cfg, console, provider_filter=provider)
+
+    if by_task:
+        from .reports.by_task import build_task_summary, render_task_table
+        task_summary = build_task_summary(db, rng)
+        if task_summary["by_task"]:
+            render_task_table(task_summary, console)
+            classified = sum(1 for r in task_summary["by_task"] if r["task_category"] != "unclassified")
+            if classified == 0:
+                console.print("[yellow]No classified sessions in this range. Run `tokenburn classify` first.[/yellow]")
+        else:
+            console.print("[yellow]No data in this range.[/yellow]")
+
     if total_ingested:
         console.print(f"[dim]Ingested {total_ingested} events.[/dim]")
 
@@ -258,6 +299,7 @@ def export(
     to: str | None = typer.Option(None, "--to", help="YYYY-MM-DD"),
     fmt: str = typer.Option("markdown", "--format", help="markdown | json | csv"),
     output: Path | None = typer.Option(None, "--output", help="Write to file (default stdout)"),
+    by_task: bool = typer.Option(False, "--by-task", help="Include task-classification sections"),
     config: Path | None = typer.Option(None, help="Config path"),
 ) -> None:
     """Export the aggregated report (no re-scan)."""
@@ -268,11 +310,24 @@ def export(
     from .reports.monthly import build_summary
 
     summary = build_summary(db, rng, cfg)
+
+    task_summary = None
+    savings_summary = None
+    if by_task:
+        from .reports.by_task import build_savings, build_task_summary
+        task_summary = build_task_summary(db, rng)
+        savings_summary = build_savings(db, rng)
+
     if fmt == "markdown":
         from .reports.markdown import render_markdown
-        text = render_markdown(summary, rng, cfg)
+        text = render_markdown(summary, rng, cfg, task_summary=task_summary, savings_summary=savings_summary)
     elif fmt == "json":
-        text = json.dumps(summary, indent=2, default=str)
+        payload = dict(summary)
+        if task_summary is not None:
+            payload["by_task"] = task_summary["by_task"]
+        if savings_summary is not None:
+            payload["savings"] = savings_summary
+        text = json.dumps(payload, indent=2, default=str)
     elif fmt == "csv":
         from .reports.markdown import render_csv
         text = render_csv(summary)
@@ -284,6 +339,200 @@ def export(
         console.print(f"[green]Wrote {output}[/green]")
     else:
         typer.echo(text)
+
+
+@app.command()
+def classify(
+    month: str | None = typer.Option(None, "--month", help="YYYY-MM (informational only — classifier scans all sessions)"),
+    provider: str | None = typer.Option(None, "--provider", help="Limit to one provider (claude_code | codex)"),
+    reclassify: bool = typer.Option(False, "--reclassify", help="Overwrite existing classifications"),
+    config: Path | None = typer.Option(None, help="Config path"),
+) -> None:
+    """Classify sessions into task categories using the heuristic classifier."""
+    cfg = load_config(config or DEFAULT_CONFIG_PATH)
+    db = open_db(expand(cfg.db_path))
+
+    if provider and provider not in {"claude_code", "codex"}:
+        raise typer.BadParameter("provider must be 'claude_code' or 'codex' (others lack signal)")
+    targets = [provider] if provider else ["claude_code", "codex"]
+
+    from .classifier.engine import classify_range
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+
+    last = {"provider": None, "task": None}
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        def cb(prov: str, cur: int, total: int) -> None:
+            if last["provider"] != prov:
+                last["task"] = progress.add_task(f"Classifying {prov}", total=total)
+                last["provider"] = prov
+            progress.update(last["task"], completed=cur)
+
+        report = classify_range(db, cfg, providers=targets, reclassify=reclassify, progress_cb=cb)
+
+    summary = Table(title="Classification summary")
+    summary.add_column("Provider")
+    summary.add_column("Sessions classified", justify="right")
+    for prov, n in report.provider_counts.items():
+        summary.add_row(prov, str(n))
+    if report.skipped_existing:
+        summary.add_row("[dim]skipped (already classified)[/dim]", str(report.skipped_existing))
+    console.print(summary)
+
+    cat_table = Table(title="By task category")
+    cat_table.add_column("Category")
+    cat_table.add_column("Sessions", justify="right")
+    for cat, n in report.category_counts.items():
+        if n:
+            cat_table.add_row(cat.value, str(n))
+    console.print(cat_table)
+    if report.skipped_existing and not reclassify:
+        console.print("[dim]Pass --reclassify to overwrite existing classifications.[/dim]")
+
+
+@app.command()
+def override(
+    session: str = typer.Option(..., "--session", help="Session ID"),
+    provider: str = typer.Option(..., "--provider", help="claude_code | codex"),
+    category: str | None = typer.Option(None, "--category", help="Task category to set"),
+    note: str | None = typer.Option(None, "--note", help="Optional note explaining the override"),
+    clear: bool = typer.Option(False, "--clear", help="Remove a prior override"),
+    config: Path | None = typer.Option(None, help="Config path"),
+) -> None:
+    """Manually override the classification for a session."""
+    cfg = load_config(config or DEFAULT_CONFIG_PATH)
+    db = open_db(expand(cfg.db_path))
+
+    if clear:
+        db.execute(
+            "DELETE FROM session_overrides WHERE session_id = ? AND provider = ?",
+            [session, provider],
+        )
+        db.conn.commit()
+        console.print(f"[green]Cleared override for {provider}/{session}[/green]")
+        return
+
+    if not category:
+        raise typer.BadParameter("--category is required (or pass --clear)")
+
+    from .classifier.taxonomy import TaskCategory
+    valid = {c.value for c in TaskCategory}
+    if category not in valid:
+        raise typer.BadParameter(f"category must be one of: {sorted(valid)}")
+
+    from datetime import datetime, timezone
+    db["session_overrides"].insert(
+        {
+            "session_id": session,
+            "provider": provider,
+            "task_category": category,
+            "note": note or "",
+            "set_at": datetime.now(timezone.utc).isoformat(),
+        },
+        pk=("session_id", "provider"),
+        replace=True,
+    )
+    db.conn.commit()
+    console.print(f"[green]Set {provider}/{session} → {category}[/green]")
+
+
+@app.command(name="task-detail")
+def task_detail(
+    session: str = typer.Option(..., "--session", help="Session ID"),
+    provider: str | None = typer.Option(None, "--provider", help="claude_code | codex (auto-detected if omitted)"),
+    config: Path | None = typer.Option(None, help="Config path"),
+) -> None:
+    """Show the classifier's verdict and reasoning for one session."""
+    cfg = load_config(config or DEFAULT_CONFIG_PATH)
+    db = open_db(expand(cfg.db_path))
+
+    rows = list(
+        db.query(
+            "SELECT * FROM session_classifications WHERE session_id = :s "
+            + ("AND provider = :p" if provider else ""),
+            {"s": session, "p": provider} if provider else {"s": session},
+        )
+    )
+    if not rows:
+        console.print(f"[yellow]No classification found for session {session!r}.[/yellow]")
+        console.print("Run `tokenburn classify` first, or check the session ID.")
+        raise typer.Exit(code=1)
+
+    overrides = list(
+        db.query(
+            "SELECT * FROM session_overrides WHERE session_id = :s "
+            + ("AND provider = :p" if provider else ""),
+            {"s": session, "p": provider} if provider else {"s": session},
+        )
+    )
+    override_by_provider = {o["provider"]: o for o in overrides}
+
+    from .classifier.fitness import load_default as load_fit
+    from .classifier.taxonomy import DESCRIPTIONS, TaskCategory
+    fit = load_fit()
+
+    for r in rows:
+        prov = r["provider"]
+        ovr = override_by_provider.get(prov)
+        effective = ovr["task_category"] if ovr else r["task_category"]
+        try:
+            cat_enum = TaskCategory(effective)
+            description = DESCRIPTIONS.get(cat_enum, "")
+        except ValueError:
+            description = ""
+
+        table = Table(title=f"{prov} / {session}")
+        table.add_column("Field")
+        table.add_column("Value")
+        table.add_row("Effective category", effective)
+        table.add_row("Description", description)
+        table.add_row("Heuristic verdict", r["task_category"])
+        table.add_row("Confidence", f"{float(r['confidence'] or 0):.2f}")
+        table.add_row("Classifier", f"{r['classifier']} ({r['classifier_version']})")
+        table.add_row("Min model class", fit.minimum_class_for(effective))
+        if ovr:
+            table.add_row("Override note", ovr.get("note") or "(none)")
+        console.print(table)
+
+        # Show signals (parsed from features_json)
+        import json as _json
+        try:
+            features = _json.loads(r["features_json"] or "{}")
+        except _json.JSONDecodeError:
+            features = {}
+        if features:
+            sig_table = Table(title="Signals")
+            sig_table.add_column("Field")
+            sig_table.add_column("Value")
+            for k, v in sorted(features.items()):
+                if v in (0, "", None, [], {}):
+                    continue
+                sig_table.add_row(k, str(v))
+            console.print(sig_table)
+
+
+@app.command()
+def savings(
+    month: str | None = typer.Option(None, "--month", help="YYYY-MM"),
+    frm: str | None = typer.Option(None, "--from", help="YYYY-MM-DD"),
+    to: str | None = typer.Option(None, "--to", help="YYYY-MM-DD"),
+    config: Path | None = typer.Option(None, help="Config path"),
+) -> None:
+    """Show right-sizing opportunities: tasks where a cheaper model would suffice."""
+    cfg = load_config(config or DEFAULT_CONFIG_PATH)
+    rng = _resolve_range(month, frm, to, cfg.timezone)
+    db = open_db(expand(cfg.db_path))
+
+    from .reports.by_task import build_savings, render_savings
+    savings_summary = build_savings(db, rng)
+    render_savings(savings_summary, console)
 
 
 @app.command()

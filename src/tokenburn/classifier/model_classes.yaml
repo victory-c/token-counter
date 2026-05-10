@@ -1,0 +1,42 @@
+# Mapping from model name (or model-name prefix) to capability class.
+# Lookup is longest-prefix-match — so "claude-haiku-4-5-20251001" hits
+# "claude-haiku" before falling through.
+#
+# Edit this file (or copy to ~/.tokenburn/model_classes.yaml to override locally)
+# whenever a new model lands.
+
+classes:
+  light:
+    - claude-haiku
+    - gpt-5-mini
+    - gpt-5.4-mini
+    - gemini-2.0-flash
+    - gemini-1.5-flash
+    - gemini-2.5-flash
+
+  medium:
+    - claude-sonnet
+    - claude-3-5-sonnet
+    - gpt-5
+    - gpt-5.3-codex
+    - gpt-5.2-codex
+    - gpt-5.4
+    - gpt-5.5
+    - gemini-2.5-pro
+    - gemini-1.5-pro
+    - gemini-3.1-pro
+
+  heavy:
+    - claude-opus
+    - claude-3-opus
+    - claude-4.5-opus-high-thinking
+    - claude-4.6-opus-high-thinking
+    - claude-opus-4-7-thinking-xhigh
+
+# Representative model used when computing "what would this cost in class X?"
+# Picked to be the canonical mid-priced member of each class so savings
+# estimates aren't biased by an outlier.
+representatives:
+  light: claude-haiku-4-5
+  medium: claude-sonnet-4
+  heavy: claude-opus-4

@@ -9,7 +9,13 @@ from ..models import DateRange
 from ..util.paths import redact_home
 
 
-def render_markdown(summary: dict[str, Any], range_: DateRange, cfg: AppConfig) -> str:
+def render_markdown(
+    summary: dict[str, Any],
+    range_: DateRange,
+    cfg: AppConfig,
+    task_summary: dict[str, Any] | None = None,
+    savings_summary: dict[str, Any] | None = None,
+) -> str:
     redact = cfg.privacy.redact_home_dir
     totals = summary["totals"]
     lines: list[str] = []
@@ -76,6 +82,50 @@ def render_markdown(summary: dict[str, Any], range_: DateRange, cfg: AppConfig) 
             lines.append(
                 f"| {r['provider']} | {proj} | `{sid}` | {int(r['tokens']):,} | ${float(r['cost']):,.2f} |"
             )
+        lines.append("")
+
+    if task_summary and task_summary.get("by_task"):
+        lines.append("## By Task")
+        lines.append("")
+        lines.append("| Task | Tokens | Cost | Dominant model | Min class |")
+        lines.append("|---|---:|---:|---|---|")
+        from ..classifier.fitness import load_default as _load_fit
+        fit = _load_fit()
+        for r in task_summary["by_task"]:
+            cat = r["task_category"]
+            share = f" ({r['dominant_share']*100:.0f}%)" if r["dominant_share"] else ""
+            warn = ""
+            if cat != "unclassified" and fit.is_overshooting(r["dominant_model"], cat):
+                warn = " ⚠"
+            min_class = fit.minimum_class_for(cat) if cat != "unclassified" else "—"
+            lines.append(
+                f"| {cat} | {int(r['tokens']):,} | ${float(r['cost']):,.2f} | "
+                f"{r['dominant_model'] or '—'}{share}{warn} | {min_class} |"
+            )
+        lines.append("")
+        lines.append("⚠ = dominant model is in a heavier class than the task typically needs.")
+        lines.append("")
+
+    if savings_summary and savings_summary.get("category_rows"):
+        lines.append("## Right-Sizing Opportunities")
+        lines.append("")
+        lines.append("| Task | Tokens | Spent | Could spend | Save | (%) | Min class |")
+        lines.append("|---|---:|---:|---:|---:|---:|---|")
+        for r in savings_summary["category_rows"]:
+            lines.append(
+                f"| {r['task_category']} | {int(r['tokens']):,} | "
+                f"${r['actual_cost']:,.2f} | ${r['recommended_cost']:,.2f} | "
+                f"${r['savings_usd']:,.2f} | -{int(r['savings_pct']*100)}% | "
+                f"{r['minimum_class']} |"
+            )
+        pct = int(savings_summary['savings_pct'] * 100) if savings_summary['savings_pct'] else 0
+        lines.append("")
+        lines.append(
+            f"**Total potential monthly savings: ${savings_summary['total_savings_usd']:,.2f}** "
+            f"(~{pct}% of right-sizable spend)"
+        )
+        lines.append("")
+        lines.append("These are recommendations against retail API list prices. Always A/B before switching production workloads.")
         lines.append("")
 
     lines.append("## Notes")

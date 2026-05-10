@@ -64,6 +64,29 @@ SCHEMA = {
             PRIMARY KEY (provider, model, effective_date)
         )
     """,
+    "session_classifications": """
+        CREATE TABLE IF NOT EXISTS session_classifications (
+            session_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            task_category TEXT NOT NULL,
+            confidence REAL,
+            classifier TEXT NOT NULL,
+            classifier_version TEXT NOT NULL,
+            features_json TEXT,
+            classified_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, provider)
+        )
+    """,
+    "session_overrides": """
+        CREATE TABLE IF NOT EXISTS session_overrides (
+            session_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            task_category TEXT NOT NULL,
+            note TEXT,
+            set_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, provider)
+        )
+    """,
 }
 
 INDEXES = [
@@ -73,6 +96,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_events(project_path)",
     "CREATE INDEX IF NOT EXISTS idx_usage_project_hash ON usage_events(project_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_session_class_category ON session_classifications(task_category)",
+    "CREATE INDEX IF NOT EXISTS idx_session_class_provider ON session_classifications(provider)",
 ]
 
 

@@ -1,0 +1,45 @@
+# For each task category, the minimum model class that handles it well.
+# "Savings" math: if the actual model used is in a heavier class than the
+# minimum, recompute the cost as if the representative model of the minimum
+# class had been used, and report the delta as the saving opportunity.
+#
+# These are recommendations, not laws. Always A/B before switching production.
+
+fitness:
+  extraction:
+    minimum_class: light
+    rationale: "Pattern matching with structured output; no deep reasoning."
+
+  summarization:
+    minimum_class: light
+    rationale: "Condensing input is well within light-model capability."
+
+  code_review:
+    minimum_class: medium
+    rationale: "Needs to follow code logic; light models miss subtle bugs."
+
+  feature_implementation:
+    minimum_class: medium
+    rationale: "Multi-file changes need consistent reasoning about a codebase."
+
+  bug_fix:
+    minimum_class: medium
+    rationale: "Test-verify loop benefits from medium-class consistency."
+
+  debugging:
+    minimum_class: medium
+    rationale: "Heavier class only when complex_reasoning booster fires."
+    upgrade_when_booster: complex_reasoning
+
+  planning_design:
+    minimum_class: medium
+    rationale: "Architecture conversations benefit from depth; not always heavy."
+    upgrade_when_booster: complex_reasoning
+
+  research:
+    minimum_class: medium
+    rationale: "WebSearch + synthesis; light models often suffice for lookup."
+
+  unclassified:
+    minimum_class: medium
+    rationale: "Default to medium when we can't tell; don't over-recommend Haiku."
