@@ -15,7 +15,8 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from ..classifier.fitness import FitnessTable, load_default as load_default_fitness
+from ..classifier.fitness import FitnessTable
+from ..classifier.fitness import load_default as load_default_fitness
 from ..models import DateRange
 from ..pricing import PricingTable, default_pricing_path
 
@@ -24,15 +25,22 @@ from ..pricing import PricingTable, default_pricing_path
 CLASSIFIED_PROVIDERS = ("claude_code", "codex")
 
 
-def build_task_summary(db, range_: DateRange) -> dict[str, Any]:
+def build_task_summary(
+    db,
+    range_: DateRange,
+    provider_filter: str | None = None,
+) -> dict[str, Any]:
     params = {"s": range_.start.isoformat(), "e": range_.end.isoformat()}
+    where_provider = "AND e.provider = :p" if provider_filter else ""
+    if provider_filter:
+        params["p"] = provider_filter
 
     # Per (category, provider, model): sum tokens, cost, sessions.
     # Use COALESCE(override, classification, 'unclassified') so manual
     # overrides win over the heuristic.
     rows = list(
         db.query(
-            """
+            f"""
             SELECT
                 COALESCE(o.task_category, c.task_category, 'unclassified') AS task_category,
                 e.provider AS provider,
@@ -51,6 +59,7 @@ def build_task_summary(db, range_: DateRange) -> dict[str, Any]:
             LEFT JOIN session_overrides o
                 ON o.session_id = e.session_id AND o.provider = e.provider
             WHERE e.local_date BETWEEN :s AND :e
+              {where_provider}
             GROUP BY
                 COALESCE(o.task_category, c.task_category, 'unclassified'),
                 e.provider, e.model
@@ -107,12 +116,13 @@ def build_savings(
     range_: DateRange,
     fitness: FitnessTable | None = None,
     pricing: PricingTable | None = None,
+    provider_filter: str | None = None,
 ) -> dict[str, Any]:
     fitness = fitness or load_default_fitness()
     if pricing is None and default_pricing_path().exists():
         pricing = PricingTable.load(default_pricing_path())
 
-    summary = build_task_summary(db, range_)
+    summary = build_task_summary(db, range_, provider_filter=provider_filter)
     raw_rows = summary["raw_rows"]
 
     opportunities: list[dict] = []
@@ -137,6 +147,7 @@ def build_savings(
         rep_provider = _provider_for_rep_model(rep_model, r["provider"])
         # Fake an event for pricing lookup
         from datetime import datetime
+
         from ..models import Confidence, UsageEvent
         from ..pricing import estimate_cost
         sample_dt = datetime.fromisoformat(range_.start.isoformat() + "T12:00:00")
@@ -234,9 +245,8 @@ def render_task_table(summary: dict[str, Any], console: Console, fitness: Fitnes
         cat = r["task_category"]
         share = f"({r['dominant_share']*100:.0f}%)" if r["dominant_share"] else ""
         warn = ""
-        if cat != "unclassified":
-            if fitness.is_overshooting(r["dominant_model"], cat):
-                warn = "  [yellow]over-served[/yellow]"
+        if cat != "unclassified" and fitness.is_overshooting(r["dominant_model"], cat):
+            warn = "  [yellow]over-served[/yellow]"
         table.add_row(
             cat,
             f"{int(r['tokens']):,}",

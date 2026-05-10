@@ -8,14 +8,20 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import sqlite_utils
 
 from ..config import AppConfig
+from ..privacy import project_identity
 from .heuristic import classify
-from .signals import SessionFeatures, codex_features, claude_code_features
-from .signals import discover_claude_jsonl, discover_codex_rollouts
+from .signals import (
+    SessionFeatures,
+    claude_code_features,
+    codex_features,
+    discover_claude_jsonl,
+    discover_codex_rollouts,
+)
 from .taxonomy import CLASSIFIER_VERSION, TaskCategory
 
 
@@ -41,7 +47,14 @@ def _persist(
     db: sqlite_utils.Database,
     feat: SessionFeatures,
     cls,
+    cfg: AppConfig,
 ) -> None:
+    features = feat.to_json_safe()
+    cwd, cwd_hash = project_identity(features.get("cwd"), cfg.privacy)
+    features["cwd"] = cwd
+    if cwd_hash:
+        features["cwd_hash"] = cwd_hash
+
     row = {
         "session_id": feat.session_id,
         "provider": feat.provider,
@@ -49,8 +62,8 @@ def _persist(
         "confidence": cls.confidence,
         "classifier": "heuristic",
         "classifier_version": CLASSIFIER_VERSION,
-        "features_json": json.dumps(feat.to_json_safe(), default=str),
-        "classified_at": datetime.now(timezone.utc).isoformat(),
+        "features_json": json.dumps(features, default=str),
+        "classified_at": datetime.now(UTC).isoformat(),
     }
     db["session_classifications"].insert(
         row, pk=("session_id", "provider"), replace=True
@@ -86,7 +99,7 @@ def classify_range(
                 skipped += 1
                 continue
             cls = classify(sessions[sid])
-            _persist(db, sessions[sid], cls)
+            _persist(db, sessions[sid], cls, cfg)
             category_counts[cls.category] += 1
         provider_counts["claude_code"] = len(sids) - (skipped if not reclassify else 0)
 
@@ -102,7 +115,7 @@ def classify_range(
                 skipped += 1
                 continue
             cls = classify(sessions[sid])
-            _persist(db, sessions[sid], cls)
+            _persist(db, sessions[sid], cls, cfg)
             category_counts[cls.category] += 1
         provider_counts["codex"] = len(sids) - (skipped - prev_skipped if not reclassify else 0)
 

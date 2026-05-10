@@ -249,7 +249,7 @@ def report(
 
     if by_task:
         from .reports.by_task import build_task_summary, render_task_table
-        task_summary = build_task_summary(db, rng)
+        task_summary = build_task_summary(db, rng, provider_filter=provider)
         if task_summary["by_task"]:
             render_task_table(task_summary, console)
             classified = sum(1 for r in task_summary["by_task"] if r["task_category"] != "unclassified")

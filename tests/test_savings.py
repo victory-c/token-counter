@@ -118,6 +118,30 @@ def test_unclassified_does_not_trigger_savings(tmp_path):
     assert savings["total_savings_usd"] == 0
 
 
+def test_task_summary_respects_provider_filter(tmp_path):
+    db = open_db(tmp_path / "t.sqlite")
+
+    claude_ev = _ev(id="claude", session_id="s4")
+    claude_ev.estimated_cost_usd = 10.0
+    codex_ev = _ev(
+        id="codex",
+        provider="codex",
+        tool="codex",
+        model="gpt-5.4",
+        session_id="s5",
+    )
+    codex_ev.estimated_cost_usd = 5.0
+    upsert_events(db, [claude_ev, codex_ev])
+    _seed_classification(db, "s4", "claude_code", "extraction")
+    _seed_classification(db, "s5", "codex", "summarization")
+
+    rng = DateRange(start=date(2026, 4, 1), end=date(2026, 4, 30))
+    summary = build_task_summary(db, rng, provider_filter="codex")
+
+    assert {r["provider"] for r in summary["raw_rows"]} == {"codex"}
+    assert {r["task_category"] for r in summary["by_task"]} == {"summarization"}
+
+
 def test_override_takes_precedence_over_classification(tmp_path):
     db = open_db(tmp_path / "t.sqlite")
     ev = _ev(id="d", session_id="s4")
