@@ -535,6 +535,27 @@ def savings(
     render_savings(savings_summary, console)
 
 
+@app.command(name="classifier-stats")
+def classifier_stats(
+    month: str | None = typer.Option(None, "--month", help="YYYY-MM"),
+    frm: str | None = typer.Option(None, "--from", help="YYYY-MM-DD"),
+    to: str | None = typer.Option(None, "--to", help="YYYY-MM-DD"),
+    config: Path | None = typer.Option(None, help="Config path"),
+) -> None:
+    """Classifier health dashboard: coverage, confidence, override patterns, unclassified $$$.
+
+    Defaults to all-time when no range is provided — override-pattern signal
+    benefits from accumulating data across months.
+    """
+    cfg = load_config(config or DEFAULT_CONFIG_PATH)
+    rng = _resolve_range(month, frm, to, cfg.timezone) if (month or frm or to) else None
+    db = open_db(expand(cfg.db_path))
+
+    from .reports.classifier_stats import build_classifier_stats, render_classifier_stats
+    summary = build_classifier_stats(db, rng)
+    render_classifier_stats(summary, console)
+
+
 @app.command()
 def reconcile(
     month: str = typer.Option(..., "--month", help="YYYY-MM"),
