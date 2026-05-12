@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import sqlite_utils
@@ -101,11 +102,97 @@ INDEXES = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Lightweight in-place migration. SQLite's CREATE TABLE IF NOT EXISTS won't
+# add columns to an already-existing table, so a DB created on an older
+# version of the package is missing whatever columns we added since.
+# Without a fix the indexes DDL below crashes on `local_date`, etc.
+#
+# This is intentionally one-off code — no migration framework. Each open
+# diffs SCHEMA against PRAGMA table_info and ADD COLUMNs anything missing.
+# ---------------------------------------------------------------------------
+
+_CONSTRAINT_PREFIXES = ("PRIMARY KEY", "FOREIGN KEY", "UNIQUE ", "CHECK ", "CONSTRAINT ")
+
+
+def _split_top_level_commas(s: str) -> list[str]:
+    """Split on commas at paren-depth zero. Needed because table-level
+    constraint clauses like `PRIMARY KEY (a, b)` contain commas that a
+    naive split would slice apart."""
+    parts: list[str] = []
+    cur: list[str] = []
+    depth = 0
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
+def _parse_expected_columns(create_sql: str) -> dict[str, str]:
+    """Extract {column_name: type_decl} from a CREATE TABLE statement.
+
+    Skips table-level constraints (PRIMARY KEY (...), FOREIGN KEY ..., etc.).
+    """
+    inner = create_sql[create_sql.index("(") + 1 : create_sql.rindex(")")]
+    cols: dict[str, str] = {}
+    for raw in _split_top_level_commas(inner):
+        line = raw.strip()
+        if not line or any(line.upper().startswith(p) for p in _CONSTRAINT_PREFIXES):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        cols[parts[0]] = parts[1]
+    return cols
+
+
+def _migrate_table_columns(
+    db: sqlite_utils.Database, table_name: str, create_sql: str
+) -> None:
+    """ALTER TABLE ADD COLUMN for any expected columns missing from the live
+    table. SQLite's ADD COLUMN can't add NOT NULL without a DEFAULT, and
+    can't introduce PRIMARY KEY at all — we strip both. Old rows stay
+    nullable; new rows are validated by the application layer."""
+    if table_name not in db.table_names():
+        return
+    existing = {r["name"] for r in db.query(f"PRAGMA table_info({table_name})")}
+    for name, type_decl in _parse_expected_columns(create_sql).items():
+        if name in existing:
+            continue
+        base = re.sub(r"\bNOT\s+NULL\b|\bPRIMARY\s+KEY\b", "", type_decl, flags=re.IGNORECASE)
+        base = re.sub(r"\s+", " ", base).strip()
+        db.execute(f"ALTER TABLE {table_name} ADD COLUMN {name} {base}")
+
+
 def open_db(path: Path) -> sqlite_utils.Database:
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite_utils.Database(str(path))
+    # 1. Create fresh tables (no-op for existing tables).
     for ddl in SCHEMA.values():
         db.execute(ddl)
+    # 2. Migrate: add columns the live tables are missing.
+    for table_name, create_sql in SCHEMA.items():
+        _migrate_table_columns(db, table_name, create_sql)
+    # 3. Backfill local_date for rows that pre-date the column.
+    #    substr(timestamp_start, 1, 10) takes the YYYY-MM-DD prefix; for
+    #    timezone-aware timestamps this is UTC-correct enough for legacy
+    #    rows (the slight inaccuracy at month boundaries is acceptable
+    #    given the alternative is leaving them NULL and breaking date
+    #    filters silently).
+    if "usage_events" in db.table_names():
+        db.execute(
+            "UPDATE usage_events SET local_date = substr(timestamp_start, 1, 10) "
+            "WHERE local_date IS NULL OR local_date = ''"
+        )
+    # 4. Indexes — safe now that all expected columns exist.
     for ddl in INDEXES:
         db.execute(ddl)
     db.conn.commit()
