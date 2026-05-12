@@ -2,7 +2,7 @@
 
 Local-first CLI that audits monthly AI coding-agent token usage across Claude Code, OpenAI Codex CLI, Cursor, and Gemini. Built to answer one question: **where is my AI spend actually going, and where am I paying for the wrong model?**
 
-![Right-sizing savings report](assets/screenshot-savings.svg)
+![Right-sizing savings report](https://raw.githubusercontent.com/victory-c/token-counter/main/assets/screenshot-savings.svg)
 
 - **Per-task spend breakdown** — extraction, code review, feature work, debugging, … not just per-model totals.
 - **Right-sizing recommendations** — flags the Opus runs that would have been fine on Sonnet, the Sonnet runs that would have been fine on Haiku, and prices the delta against real list prices.
