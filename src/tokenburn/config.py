@@ -114,7 +114,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     cfg_path = path or DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
         raise FileNotFoundError(
-            f"No config at {cfg_path}. Run `tokenburn init` to create one."
+            f"No config at {cfg_path}. Run `tokencounter init` to create one."
         )
     with cfg_path.open() as f:
         raw = yaml.safe_load(f)

@@ -21,7 +21,7 @@ from .models import DateRange
 from .pricing import PricingTable, default_pricing_path, estimate_cost
 from .util.dates import month_range
 
-app = typer.Typer(help="TokenBurn Ledger — local AI coding-agent token usage auditor.")
+app = typer.Typer(help="TokenCounter — local AI coding-agent token usage auditor.")
 console = Console()
 
 
@@ -80,16 +80,16 @@ def doctor(
     """Validate config, log paths, pricing, optional binaries."""
     cfg_path = config or DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
-        console.print(f"[red]No config at {cfg_path}.[/red] Run `tokenburn init`.")
+        console.print(f"[red]No config at {cfg_path}.[/red] Run `tokencounter init`.")
         raise typer.Exit(code=1)
     cfg = load_config(cfg_path)
 
-    table = Table(title="tokenburn doctor", show_lines=False)
+    table = Table(title="tokencounter doctor", show_lines=False)
     table.add_column("Check")
     table.add_column("Status")
     table.add_column("Detail")
 
-    table.add_row("tokenburn version", "[green]ok[/green]", f"{__version__} (parser v{PARSER_VERSION})")
+    table.add_row("tokencounter version", "[green]ok[/green]", f"{__version__} (parser v{PARSER_VERSION})")
     table.add_row("config", "[green]ok[/green]", str(cfg_path))
     table.add_row("timezone", "[green]ok[/green]", cfg.timezone)
 
@@ -151,7 +151,7 @@ def doctor(
             "classifier coverage",
             status,
             f"{classified}/{total} sessions classified ({pct}%) — Claude+Codex"
-            + (" — run `tokenburn classify`" if classified < total else ""),
+            + (" — run `tokencounter classify`" if classified < total else ""),
         )
     else:
         table.add_row("classifier coverage", "[dim]n/a[/dim]", "no Claude/Codex events ingested yet")
@@ -213,7 +213,7 @@ def report(
     frm: str | None = typer.Option(None, "--from", help="YYYY-MM-DD"),
     to: str | None = typer.Option(None, "--to", help="YYYY-MM-DD"),
     provider: str | None = typer.Option(None, "--provider", help="Limit to one provider"),
-    by_task: bool = typer.Option(False, "--by-task", help="Add a per-task breakdown (requires `tokenburn classify` to have run)"),
+    by_task: bool = typer.Option(False, "--by-task", help="Add a per-task breakdown (requires `tokencounter classify` to have run)"),
     config: Path | None = typer.Option(None, help="Config path"),
     no_scan: bool = typer.Option(False, "--no-scan", help="Skip re-scanning sources; query DB only"),
 ) -> None:
@@ -254,7 +254,7 @@ def report(
             render_task_table(task_summary, console)
             classified = sum(1 for r in task_summary["by_task"] if r["task_category"] != "unclassified")
             if classified == 0:
-                console.print("[yellow]No classified sessions in this range. Run `tokenburn classify` first.[/yellow]")
+                console.print("[yellow]No classified sessions in this range. Run `tokencounter classify` first.[/yellow]")
         else:
             console.print("[yellow]No data in this range.[/yellow]")
 
@@ -462,7 +462,7 @@ def task_detail(
     )
     if not rows:
         console.print(f"[yellow]No classification found for session {session!r}.[/yellow]")
-        console.print("Run `tokenburn classify` first, or check the session ID.")
+        console.print("Run `tokencounter classify` first, or check the session ID.")
         raise typer.Exit(code=1)
 
     overrides = list(

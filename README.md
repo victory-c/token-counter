@@ -1,46 +1,63 @@
-# TokenBurn Ledger
+# TokenCounter
 
-Local-first CLI that audits monthly AI coding-agent token usage across Claude Code, OpenAI Codex CLI, Cursor, and Gemini.
+Local-first CLI that audits monthly AI coding-agent token usage across Claude Code, OpenAI Codex CLI, Cursor, and Gemini. Built to answer one question: **where is my AI spend actually going, and where am I paying for the wrong model?**
+
+![Right-sizing savings report](assets/screenshot-savings.svg)
+
+- **Per-task spend breakdown** — extraction, code review, feature work, debugging, … not just per-model totals.
+- **Right-sizing recommendations** — flags the Opus runs that would have been fine on Sonnet, the Sonnet runs that would have been fine on Haiku, and prices the delta against real list prices.
+- **No API keys, no proxy, no cloud** — reads the JSONL logs the CLIs already write to disk. Cursor and Gemini come in via dropped CSV/JSONL.
 
 ## Install
 
 ```bash
-uv venv --python 3.12
-uv pip install -e ".[dev]"
+pipx install tokencounter
 ```
+
+Or with `pip` / `uv`:
+
+```bash
+pip install tokencounter
+# or
+uv pip install tokencounter
+```
+
+> The legacy binary name `tokenburn` is kept as an alias — either command works.
 
 ## Quick start
 
 ```bash
-uv run tokenburn init
-uv run tokenburn doctor
-uv run tokenburn scan
-uv run tokenburn report --month 2026-04
-uv run tokenburn export --month 2026-04 --format markdown --output report.md
+tokencounter init
+tokencounter doctor
+tokencounter report --month 2026-04
+tokencounter export --month 2026-04 --format markdown --output report.md
 ```
 
-## Task classification & right-sizing (v0.2)
+## Task classification & right-sizing
 
 Dollar totals hide the real waste: most token spend goes to jobs that didn't need
-the strongest model. TokenBurn classifies each session into a task category
+the strongest model. TokenCounter classifies each session into a task category
 (extraction, summarization, code-review, feature-implementation, debugging, …)
 and tells you which categories are over-served.
 
 ```bash
 # Classify Claude + Codex sessions (heuristic, no API calls).
-uv run tokenburn classify --month 2026-04
+tokencounter classify --month 2026-04
 
 # By-task breakdown alongside the regular report.
-uv run tokenburn report --month 2026-04 --by-task
+tokencounter report --month 2026-04 --by-task
 
 # Right-sizing recommendations: where Opus runs do work Sonnet would handle, etc.
-uv run tokenburn savings --month 2026-04
+tokencounter savings --month 2026-04
+
+# Classifier health dashboard: coverage, confidence, override patterns.
+tokencounter classifier-stats
 
 # Explain how one session was classified.
-uv run tokenburn task-detail --session SESS_ID
+tokencounter task-detail --session SESS_ID
 
 # Override a misclassified session.
-uv run tokenburn override --session SESS_ID --provider claude_code --category extraction
+tokencounter override --session SESS_ID --provider claude_code --category extraction
 ```
 
 The classifier is a heuristic decision tree (no LLM calls, no API keys, fully
@@ -48,10 +65,10 @@ local). It reads the same `~/.claude/projects/**/*.jsonl` and `~/.codex/sessions
 files the parsers do, extracts session-level signals (tool-call counts, file
 extensions touched, message patterns), and scores each task category. Ties
 break in favor of explainability — when a session looks misclassified, run
-`tokenburn task-detail` to see the exact signals and rules that fired, edit
+`tokencounter task-detail` to see the exact signals and rules that fired, edit
 `src/tokenburn/classifier/heuristic.py`, and re-run.
 
-Cursor and Gemini events appear as `unclassified` because the dashboard CSV
+Cursor and Gemini events stay `unclassified` because their dashboard CSV
 and API metadata don't carry conversation content; without that signal,
 classification would be guessing.
 
@@ -85,7 +102,24 @@ Default posture: local-only, no raw prompts/code stored, home-dir redaction in d
 If `ccusage` is on PATH:
 
 ```bash
-uv run tokenburn reconcile --month 2026-04
+tokencounter reconcile --month 2026-04
 ```
 
 Compares native-parser totals to `ccusage daily --json` and warns if delta > 5%.
+
+## Development
+
+```bash
+git clone https://github.com/victory-c/token-counter
+cd token-counter
+uv venv --python 3.12
+uv pip install -e ".[dev]"
+uv run pytest                            # 57 tests
+uv run tokencounter --help
+```
+
+The internal Python package name is still `tokenburn` (no breaking refactor) — the CLI command and PyPI distribution are `tokencounter`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

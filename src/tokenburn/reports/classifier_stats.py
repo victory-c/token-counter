@@ -1,6 +1,6 @@
 """Classifier health / re-clustering signal dashboard.
 
-`tokenburn classifier-stats` shows:
+`tokencounter classifier-stats` shows:
   - Coverage per provider: how many sessions got classified (eligible vs. not)
   - Confidence distribution: where the classifier was unsure
   - Override pairs: where users overruled the heuristic, by (heuristic → override) pair
@@ -268,7 +268,7 @@ def render_classifier_stats(summary: dict[str, Any], console: Console) -> None:
     if total > 0:
         console.print(
             "[dim]Low-confidence sessions are top candidates for "
-            "`tokenburn task-detail --session …` inspection.[/dim]"
+            "`tokencounter task-detail --session …` inspection.[/dim]"
         )
 
     # Overrides
@@ -335,5 +335,5 @@ def render_classifier_stats(summary: dict[str, Any], console: Console) -> None:
     if not elig:
         console.print(
             "[dim]No eligible-provider sessions left unclassified — "
-            "run `tokenburn classify` if that's not what you expected.[/dim]"
+            "run `tokencounter classify` if that's not what you expected.[/dim]"
         )

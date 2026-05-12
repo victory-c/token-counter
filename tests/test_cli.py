@@ -23,7 +23,7 @@ def test_init_then_doctor(tmp_path):
     _patch_db_path(cfg_path, tmp_path / "tb.sqlite")
     r = runner.invoke(app, ["doctor", "--config", str(cfg_path)])
     assert r.exit_code == 0
-    assert "tokenburn version" in r.output
+    assert "tokencounter version" in r.output
     assert "config" in r.output
 
 

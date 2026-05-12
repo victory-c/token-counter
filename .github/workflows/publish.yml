@@ -1,0 +1,44 @@
+name: publish
+
+# Builds a wheel + sdist on every tag push that looks like a version, and
+# uploads it to PyPI using OIDC trusted-publisher (no API token in secrets).
+#
+# Before this works you have to do a one-time setup on PyPI:
+#   https://pypi.org/manage/account/publishing/
+# Configure a trusted publisher with:
+#   PyPI Project Name: tokencounter
+#   Owner:             victory-c
+#   Repository:        token-counter
+#   Workflow:          publish.yml
+#   Environment:       pypi
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # required for OIDC trusted publisher
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

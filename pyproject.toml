@@ -1,11 +1,37 @@
 [project]
-name = "tokenburn"
+name = "tokencounter"
 version = "0.2.0"
 description = "Local-first CLI that audits monthly AI coding-agent token usage across Claude Code, Codex, Cursor, and Gemini."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Victor Chun" }]
 license = { text = "MIT" }
+keywords = [
+    "llm",
+    "tokens",
+    "ai",
+    "cli",
+    "claude",
+    "codex",
+    "cursor",
+    "gemini",
+    "cost",
+    "telemetry",
+    "observability",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: System :: Monitoring",
+]
 dependencies = [
     "typer>=0.12",
     "rich>=13.7",
@@ -24,7 +50,14 @@ dev = [
     "ruff>=0.5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/victory-c/token-counter"
+Repository = "https://github.com/victory-c/token-counter"
+Issues = "https://github.com/victory-c/token-counter/issues"
+
 [project.scripts]
+tokencounter = "tokenburn.cli:app"
+# Legacy alias — keeps Twitter-thread / early-doc commands working.
 tokenburn = "tokenburn.cli:app"
 
 [build-system]
@@ -37,6 +70,15 @@ artifacts = [
     "src/tokenburn/pricing.yaml",
     "src/tokenburn/classifier/model_classes.yaml",
     "src/tokenburn/classifier/task_fitness.yaml",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/tokenburn",
+    "examples",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
 ]
 
 [tool.pytest.ini_options]
