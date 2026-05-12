@@ -23,9 +23,36 @@ from ..models import DateRange
 from .by_task import CLASSIFIED_PROVIDERS
 
 # 0-1 confidence is bucketed into these ranges, ordered high-to-low so the
-# rendered histogram reads naturally (best confidence on top).
-_CONF_BUCKETS = ("0.80–1.00", "0.60–0.79", "0.40–0.59", "< 0.40")
+# rendered histogram reads naturally (best confidence on top). Each tuple is
+# (label, lower_bound_inclusive). The label is what the user sees in the
+# histogram AND what the SQL CASE expression returns — keeping them tied to
+# one source prevents silent zero-bucket drift if someone tweaks the ranges.
+_CONF_BUCKETS: tuple[tuple[str, float | None], ...] = (
+    ("0.80–1.00", 0.80),
+    ("0.60–0.79", 0.60),
+    ("0.40–0.59", 0.40),
+    ("< 0.40", None),  # the ELSE bucket
+)
+_CONF_LABELS = tuple(label for label, _ in _CONF_BUCKETS)
 _BAR_WIDTH = 20
+
+
+def _confidence_case_sql() -> str:
+    """Build the SQL CASE expression for the confidence histogram from the
+    canonical bucket definitions, so the SQL labels and the Python tuple
+    can't drift."""
+    when_clauses = "\n                ".join(
+        f"WHEN confidence >= {bound:.2f} THEN '{label}'"
+        for label, bound in _CONF_BUCKETS
+        if bound is not None
+    )
+    else_label = next(label for label, bound in _CONF_BUCKETS if bound is None)
+    return (
+        "CASE\n                "
+        f"{when_clauses}\n                "
+        f"ELSE '{else_label}'\n            "
+        "END"
+    )
 
 
 def build_classifier_stats(db, range_: DateRange | None) -> dict[str, Any]:
@@ -95,12 +122,7 @@ def build_classifier_stats(db, range_: DateRange | None) -> dict[str, Any]:
         db.query(
             f"""
             SELECT
-                CASE
-                    WHEN confidence >= 0.80 THEN '0.80–1.00'
-                    WHEN confidence >= 0.60 THEN '0.60–0.79'
-                    WHEN confidence >= 0.40 THEN '0.40–0.59'
-                    ELSE '< 0.40'
-                END AS bucket,
+                {_confidence_case_sql()} AS bucket,
                 COUNT(*) AS n
             FROM session_classifications c
             {exists_classification}
@@ -110,7 +132,7 @@ def build_classifier_stats(db, range_: DateRange | None) -> dict[str, Any]:
         )
     )
     hist_map = {r["bucket"]: int(r["n"]) for r in hist_rows}
-    confidence = OrderedDict((b, hist_map.get(b, 0)) for b in _CONF_BUCKETS)
+    confidence = OrderedDict((b, hist_map.get(b, 0)) for b in _CONF_LABELS)
     total_classified = sum(confidence.values())
 
     # --- 3. Override pairs (only disagreements count) ---

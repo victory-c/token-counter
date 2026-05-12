@@ -25,6 +25,25 @@ app = typer.Typer(help="TokenCounter — local AI coding-agent token usage audit
 console = Console()
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"tokencounter {__version__} (parser v{PARSER_VERSION})")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    """Entrypoint — only here to mount the global --version flag."""
+
+
 def _adapter_for(name: str, app_cfg: AppConfig):
     from .adapters.claude_code import ClaudeCodeAdapter
     from .adapters.codex import CodexAdapter

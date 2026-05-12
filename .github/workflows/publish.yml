@@ -42,3 +42,28 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  smoke-test:
+    # Confirms the published artifact actually installs and the CLI runs.
+    # If PyPI accepted the upload but the wheel is somehow broken, the
+    # first signal here is the workflow going red — not a user complaint.
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Wait for PyPI index to update
+        # PyPI's index can lag the upload by ~30s. Without this, the install
+        # below sometimes hits 404 on the just-published version.
+        run: sleep 45
+      - name: Install from PyPI
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python -m pip install --upgrade pip
+          pip install "tokencounter==$VERSION"
+      - name: Smoke-test the CLI
+        run: |
+          tokencounter --version
+          tokencounter --help
+          tokenburn --version  # legacy alias

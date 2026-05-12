@@ -27,6 +27,14 @@ def test_init_then_doctor(tmp_path):
     assert "config" in r.output
 
 
+def test_version_flag_prints_and_exits():
+    runner = CliRunner()
+    r = runner.invoke(app, ["--version"])
+    assert r.exit_code == 0
+    assert "tokencounter" in r.output
+    assert "parser v" in r.output
+
+
 def test_import_cursor_then_report_then_export(tmp_path):
     runner = CliRunner()
     cfg_path = tmp_path / "tb.yaml"

@@ -111,3 +111,52 @@ def test_parse_expected_columns_skips_table_level_primary_key():
 def test_split_top_level_commas_respects_paren_depth():
     assert _split_top_level_commas("a, b, c") == ["a", " b", " c"]
     assert _split_top_level_commas("a, foo(x, y), b") == ["a", " foo(x, y)", " b"]
+
+
+def test_migrate_swallows_concurrent_duplicate_column_race(tmp_path):
+    """Simulates the concurrent first-open race: process A reads PRAGMA
+    table_info and sees `local_date` missing, then process B sneaks in
+    and adds the column, then process A tries ALTER TABLE and SQLite
+    raises 'duplicate column name'. The migration must swallow that
+    specific error and continue."""
+    import sqlite3
+    from unittest.mock import patch
+
+    from tokenburn.db import SCHEMA, _migrate_table_columns
+
+    p = tmp_path / "race.sqlite"
+    _make_v01_style_db(p)
+    # First open: do everything the live code does, get the DB in v0.2 shape.
+    open_db(p).close()
+
+    # Now stage the race: monkey-patch table_info to claim a column is
+    # missing (forcing an ADD COLUMN), but the column actually exists.
+    # ALTER TABLE will then raise "duplicate column name" — the migration
+    # should catch it and not re-raise.
+    import sqlite_utils
+
+    db = sqlite_utils.Database(str(p))
+    create_sql = SCHEMA["usage_events"]
+
+    original_query = db.query
+
+    def fake_query(sql, *args, **kwargs):
+        # Pretend local_date is missing from the live table.
+        if "PRAGMA table_info(usage_events)" in sql:
+            rows = list(original_query(sql, *args, **kwargs))
+            return iter([r for r in rows if r["name"] != "local_date"])
+        return original_query(sql, *args, **kwargs)
+
+    with patch.object(db, "query", side_effect=fake_query):
+        # Must NOT raise.
+        _migrate_table_columns(db, "usage_events", create_sql)
+
+    # And a non-duplicate OperationalError should still propagate.
+    def bad_execute(sql, *args, **kwargs):
+        raise sqlite3.OperationalError("some unrelated error")
+
+    with patch.object(db, "execute", side_effect=bad_execute), \
+         patch.object(db, "query", side_effect=fake_query):
+        import pytest
+        with pytest.raises(sqlite3.OperationalError):
+            _migrate_table_columns(db, "usage_events", create_sql)

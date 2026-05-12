@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from pathlib import Path
 
 import sqlite_utils
@@ -169,7 +170,14 @@ def _migrate_table_columns(
             continue
         base = re.sub(r"\bNOT\s+NULL\b|\bPRIMARY\s+KEY\b", "", type_decl, flags=re.IGNORECASE)
         base = re.sub(r"\s+", " ", base).strip()
-        db.execute(f"ALTER TABLE {table_name} ADD COLUMN {name} {base}")
+        try:
+            db.execute(f"ALTER TABLE {table_name} ADD COLUMN {name} {base}")
+        except sqlite3.OperationalError as exc:
+            # Concurrent first-open race: another process added the column
+            # between our PRAGMA read and our ALTER. SQLite raises
+            # "duplicate column name: foo" — fine, the column is there.
+            if "duplicate column" not in str(exc).lower():
+                raise
 
 
 def open_db(path: Path) -> sqlite_utils.Database:
