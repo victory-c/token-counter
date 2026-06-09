@@ -226,6 +226,39 @@ def _resolve_range(month: str | None, frm: str | None, to: str | None, tz: str) 
     raise typer.BadParameter("Provide either --month YYYY-MM or both --from and --to")
 
 
+def _range_label(month: str | None, rng: DateRange) -> str:
+    """Filename-safe label for a range: the month if given, else start_to_end."""
+    if month:
+        return month
+    return f"{rng.start.isoformat()}_to_{rng.end.isoformat()}"
+
+
+def _resolve_output_dir(cfg: AppConfig, override: Path | None) -> tuple[Path, str | None]:
+    """Resolve the export directory, creating it if needed.
+
+    Returns (dir, warning). Falls back to the current working directory with a
+    warning when the configured/overridden directory can't be created.
+    """
+    target = expand(override) if override else expand(cfg.exports.default_output_dir)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        return target, None
+    except OSError:
+        cwd = Path.cwd()
+        return cwd, (
+            f"Could not write to {target}. Generated files in current directory instead: {cwd}"
+        )
+
+
+def _open_in_browser(path: Path) -> bool:
+    import webbrowser
+
+    try:
+        return webbrowser.open(path.resolve().as_uri())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @app.command()
 def report(
     month: str | None = typer.Option(None, "--month", help="YYYY-MM"),
@@ -358,6 +391,125 @@ def export(
         console.print(f"[green]Wrote {output}[/green]")
     else:
         typer.echo(text)
+
+
+def _build_dashboard_html(db, rng: DateRange, cfg: AppConfig, provider_filter: str | None) -> str:
+    """Build the standalone dashboard HTML string from the DB (no re-scan)."""
+    from .reports.dashboard import build_dashboard_payload, render_dashboard_html
+
+    pricing = PricingTable.load(default_pricing_path()) if default_pricing_path().exists() else None
+    payload = build_dashboard_payload(
+        db, rng, cfg, pricing=pricing, provider_filter=provider_filter
+    )
+    return render_dashboard_html(payload)
+
+
+@app.command()
+def dashboard(
+    month: str | None = typer.Option(None, "--month", help="YYYY-MM"),
+    frm: str | None = typer.Option(None, "--from", help="YYYY-MM-DD"),
+    to: str | None = typer.Option(None, "--to", help="YYYY-MM-DD"),
+    provider: str | None = typer.Option(None, "--provider", help="Limit to one provider"),
+    output: Path | None = typer.Option(None, "--output", help="Write to this file (overrides default ~/Downloads path)"),
+    open_: bool = typer.Option(False, "--open", help="Open the dashboard in the default browser"),
+    config: Path | None = typer.Option(None, help="Config path"),
+) -> None:
+    """Generate a standalone interactive HTML dashboard (no re-scan)."""
+    cfg = load_config(config or DEFAULT_CONFIG_PATH)
+    rng = _resolve_range(month, frm, to, cfg.timezone)
+    db = open_db(expand(cfg.db_path))
+
+    html = _build_dashboard_html(db, rng, cfg, provider)
+
+    if output:
+        out_path = expand(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir, warning = _resolve_output_dir(cfg, None)
+        if warning:
+            console.print(f"[yellow]Warning: {warning}[/yellow]")
+        label = _range_label(month, rng)
+        out_path = out_dir / cfg.exports.dashboard_filename_pattern.format(label=label)
+
+    out_path.write_text(html)
+    console.print(f"[green]Generated interactive HTML dashboard:[/green] {out_path}")
+
+    if open_ or cfg.dashboard.auto_open:
+        if _open_in_browser(out_path):
+            console.print("[dim]Opened dashboard in default browser.[/dim]")
+        else:
+            console.print("[yellow]Could not open a browser automatically.[/yellow]")
+
+
+@app.command(name="export-month")
+def export_month(
+    month: str | None = typer.Option(None, "--month", help="YYYY-MM"),
+    frm: str | None = typer.Option(None, "--from", help="YYYY-MM-DD"),
+    to: str | None = typer.Option(None, "--to", help="YYYY-MM-DD"),
+    provider: str | None = typer.Option(None, "--provider", help="Limit to one provider"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", help="Directory for both files (default ~/Downloads)"),
+    by_task: bool = typer.Option(False, "--by-task", help="Include task-classification sections in the Markdown report"),
+    open_dashboard: bool = typer.Option(False, "--open-dashboard", help="Open the dashboard after generating"),
+    config: Path | None = typer.Option(None, help="Config path"),
+) -> None:
+    """Generate BOTH the Markdown report and the HTML dashboard (no re-scan).
+
+    The two outputs are parallel and never overwrite each other. If one fails,
+    the other is still written and the failure is reported.
+    """
+    cfg = load_config(config or DEFAULT_CONFIG_PATH)
+    rng = _resolve_range(month, frm, to, cfg.timezone)
+    db = open_db(expand(cfg.db_path))
+    label = _range_label(month, rng)
+
+    out_dir, warning = _resolve_output_dir(cfg, output_dir)
+    if warning:
+        console.print(f"[yellow]Warning: {warning}[/yellow]")
+
+    md_path = out_dir / cfg.exports.markdown_filename_pattern.format(label=label)
+    html_path = out_dir / cfg.exports.dashboard_filename_pattern.format(label=label)
+
+    md_ok = False
+    try:
+        from .reports.markdown import render_markdown
+        from .reports.monthly import build_summary
+
+        summary = build_summary(db, rng, cfg, provider_filter=provider)
+        task_summary = savings_summary = None
+        if by_task:
+            from .reports.by_task import build_savings, build_task_summary
+            task_summary = build_task_summary(db, rng, provider_filter=provider)
+            savings_summary = build_savings(db, rng)
+        text = render_markdown(summary, rng, cfg, task_summary=task_summary, savings_summary=savings_summary)
+        md_path.write_text(text)
+        md_ok = True
+        console.print(f"[green]Generated Markdown report:[/green] {md_path}")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Failed to generate Markdown report:[/red] {exc}")
+
+    html_ok = False
+    try:
+        html = _build_dashboard_html(db, rng, cfg, provider)
+        html_path.write_text(html)
+        html_ok = True
+        console.print(f"[green]Generated interactive HTML dashboard:[/green] {html_path}")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Failed to generate dashboard:[/red] {exc}")
+
+    if html_ok and md_ok:
+        pass
+    elif md_ok:
+        console.print("[dim]The Markdown report was saved successfully.[/dim]")
+    elif html_ok:
+        console.print("[dim]The dashboard was saved successfully.[/dim]")
+    else:
+        raise typer.Exit(code=1)
+
+    if open_dashboard and html_ok:
+        if _open_in_browser(html_path):
+            console.print("[dim]Opened dashboard in default browser.[/dim]")
+        else:
+            console.print("[yellow]Could not open a browser automatically.[/yellow]")
 
 
 @app.command()

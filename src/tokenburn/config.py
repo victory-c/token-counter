@@ -38,6 +38,26 @@ class SubscriptionConfig(BaseModel):
     providers: list[str]
 
 
+class DashboardConfig(BaseModel):
+    enabled: bool = True
+    auto_open: bool = False
+    default_metric: str = "total_tokens"
+    include_session_table: bool = True
+    max_table_rows: int = 5000
+    # Share of usage in estimated/manual/unavailable confidence buckets above
+    # which the dashboard shows a data-quality warning.
+    confidence_warning_threshold: float = 0.25
+    # Share of total tokens held by the single top provider above which the
+    # dashboard flags provider concentration.
+    provider_concentration_threshold: float = 0.70
+
+
+class ExportsConfig(BaseModel):
+    default_output_dir: str = "~/Downloads"
+    markdown_filename_pattern: str = "tokenburn-report-{label}.md"
+    dashboard_filename_pattern: str = "tokenburn-dashboard-{label}.html"
+
+
 class AppConfig(BaseModel):
     version: int = 1
     timezone: str = "America/Los_Angeles"
@@ -46,6 +66,8 @@ class AppConfig(BaseModel):
     pricing: PricingConfig = Field(default_factory=PricingConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     subscriptions: dict[str, SubscriptionConfig] = Field(default_factory=dict)
+    dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    exports: ExportsConfig = Field(default_factory=ExportsConfig)
 
 
 DEFAULT_CONFIG_TEMPLATE = """\
@@ -103,6 +125,20 @@ subscriptions:
   google_pro:
     monthly_cost_usd: 20
     providers: [gemini]
+
+dashboard:
+  enabled: true
+  auto_open: false
+  default_metric: total_tokens
+  include_session_table: true
+  max_table_rows: 5000
+  confidence_warning_threshold: 0.25
+  provider_concentration_threshold: 0.70
+
+exports:
+  default_output_dir: ~/Downloads
+  markdown_filename_pattern: tokenburn-report-{label}.md
+  dashboard_filename_pattern: tokenburn-dashboard-{label}.html
 """
 
 
