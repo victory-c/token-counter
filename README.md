@@ -33,6 +33,36 @@ tokencounter report --month 2026-04
 tokencounter export --month 2026-04 --format markdown --output report.md
 ```
 
+## Reports & interactive dashboard
+
+The Markdown report stays the canonical, version-controllable document. Alongside
+it, `dashboard` generates a **standalone interactive HTML dashboard** — same data,
+visual and explorable. It is a single self-contained file: works offline, no
+backend, no external requests, and never embeds raw prompts/code.
+
+```bash
+# Markdown report (stdout, or --output FILE)
+tokencounter export --month 2026-04 --format markdown --output report.md
+
+# Interactive HTML dashboard → ~/Downloads/tokenburn-dashboard-2026-04.html
+tokencounter dashboard --month 2026-04
+tokencounter dashboard --month 2026-04 --open          # also open in browser
+tokencounter dashboard --month 2026-04 --output ~/my-dash.html
+
+# Both at once → ~/Downloads/ (override with --output-dir)
+tokencounter export-month --month 2026-04
+tokencounter export-month --month 2026-04 --open-dashboard
+```
+
+The dashboard has client-side filters (provider / model / project / confidence /
+metric), donut + bar + daily-trend charts, a sortable / searchable / paginated
+session table with CSV export and column toggles, a token-black-holes ranking,
+data-quality (confidence) breakdown, pricing assumptions, subscription
+value-multiples, and provider caveats. All dollar figures are labelled
+**API-equivalent estimates**, not vendor cost. The default output directory
+(`~/Downloads`) and filename patterns are configurable under `exports:` /
+`dashboard:` in the config.
+
 ## Task classification & right-sizing
 
 Dollar totals hide the real waste: most token spend goes to jobs that didn't need
