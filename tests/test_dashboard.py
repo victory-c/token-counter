@@ -11,7 +11,11 @@ from typer.testing import CliRunner
 from tokenburn.cli import app
 from tokenburn.db import open_db, upsert_events
 from tokenburn.models import Confidence, DateRange, UsageEvent
-from tokenburn.reports.dashboard import build_dashboard_payload, render_dashboard_html
+from tokenburn.reports.dashboard import (
+    _HTML_TEMPLATE,
+    build_dashboard_payload,
+    render_dashboard_html,
+)
 
 
 def _make_event(**kw) -> UsageEvent:
@@ -129,6 +133,76 @@ def test_render_html_is_self_contained(tmp_path, tmp_app_config):
     restored = block.group(1).replace("<\\/", "</")
     data = json.loads(restored)
     assert data["sessions"]
+
+
+# A string that, if it ever reached the page unescaped/un-neutralized, would
+# both break out of the JSON <script> island and fire an XSS payload.
+_XSS = "</script><img src=x onerror=alert(1)>'\"&"
+
+
+def test_render_neutralizes_script_breakout_from_user_data(tmp_path, tmp_app_config):
+    # Log-derived fields (project path, model, session id) are attacker-
+    # influenceable. They are embedded verbatim in a <script
+    # type="application/json"> island, so the only server-side defense against
+    # them closing that tag is the "</" -> "<\/" neutralization. Lock it in.
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    upsert_events(
+        db,
+        [_make_event(id="x", model=_XSS, session_id=_XSS, project_path="/tmp/" + _XSS)],
+    )
+    payload = build_dashboard_payload(db, _april(), cfg)
+    html = render_dashboard_html(payload)
+
+    block = re.search(r'type="application/json">(.*?)</script>', html, re.DOTALL)
+    assert block, "embedded JSON block missing"
+    island = block.group(1)
+    # Every "</" inside the island is neutralized, so the hostile data cannot
+    # prematurely close the script tag; the island still parses as JSON.
+    assert "</" not in island
+    assert json.loads(island.replace("<\\/", "</"))["sessions"]
+    # The hostile bytes are confined to the JSON island and never appear in the
+    # surrounding HTML (where they would be a live sink).
+    outside = html[: block.start(1)] + html[block.end(1) :]
+    assert "onerror=alert(1)" not in outside
+
+
+def test_user_controlled_fields_are_escaped_in_dashboard_js():
+    # All rendering happens client-side via innerHTML, so every interpolation
+    # of an attacker-influenceable field must pass through esc(). This catches
+    # a future field being wired into innerHTML without escaping (the residual
+    # XSS risk for this dashboard). Static, app-controlled values (column
+    # labels, numeric formatters) are intentionally not required to be escaped.
+    #
+    # These accessors are user/log-controlled text that only ever reaches the
+    # page through an innerHTML template literal (never textContent), so every
+    # interpolation referencing one must wrap it in esc().
+    user_field_tokens = (
+        "p[0]",  # project name (top-projects + donut)
+        "p.model",
+        "p.provider",
+        "p.source_url",
+        "pv",  # provider (composition chart)
+        "d.name",  # subscription name
+        "r.model",
+        "r.provider",
+        "r.project",
+        "r.session",
+    )
+    interpolations = re.findall(r"\$\{([^{}]+)\}", _HTML_TEMPLATE)
+    offenders = [
+        expr
+        for expr in interpolations
+        if any(tok in expr for tok in user_field_tokens) and "esc(" not in expr
+    ]
+    assert not offenders, f"un-escaped user-controlled interpolations: {offenders}"
+    # Fields escaped at their innerHTML site, asserted directly: the metadata
+    # line (generated_at/timezone), caveat keys/values (may echo provider/model
+    # names), and warnings. `k`/`v`/`w` are too generic to token-match safely,
+    # and DATA.meta.timezone also appears in a textContent sink (safe) above.
+    for site in ("esc(DATA.meta.generated_at)", "esc(DATA.meta.timezone)",
+                 "esc(k)", "esc(v)", "esc(w)"):
+        assert site in _HTML_TEMPLATE, f"missing expected escaping site: {site}"
 
 
 def _init_cfg(runner: CliRunner, tmp_path: Path) -> Path:
