@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterator
 from pathlib import Path
 
-from ..config import expand
 from ..models import Confidence, DateRange, UsageEvent
 from ..privacy import project_identity
 from ..util.dates import local_date, parse_iso
 from ..util.hashing import event_id
+from ..util.paths import resolve_log_dirs
 from .base import DiscoveredSource, ProviderAdapter
 
 _USAGE_FIELDS = (
@@ -30,27 +29,24 @@ class CodexAdapter(ProviderAdapter):
     display_name = "OpenAI Codex CLI"
 
     def discover(self) -> list[DiscoveredSource]:
-        explicit = self.provider_config.paths or []
-        codex_home = os.environ.get("CODEX_HOME")
-        candidates = []
-        if explicit:
-            candidates.extend(expand(p) for p in explicit)
-        elif codex_home:
-            candidates.append(expand(codex_home) / "sessions")
-        else:
-            candidates.append(expand("~/.codex/sessions"))
-
-        sources = []
-        for p in candidates:
-            sources.append(
-                DiscoveredSource(
-                    provider=self.id,
-                    path=p,
-                    kind="local_rollout_dir",
-                    exists=p.exists() and p.is_dir(),
-                )
+        # Honour an explicit config; otherwise probe CODEX_HOME, then the
+        # default and XDG-style locations.
+        candidates = resolve_log_dirs(
+            self.provider_config.paths,
+            env_subdirs=[("CODEX_HOME", "sessions")],
+            fallbacks=["~/.codex/sessions", "~/.config/codex/sessions"],
+        )
+        existing = [p for p in candidates if p.exists() and p.is_dir()]
+        chosen = existing or candidates[:1]
+        return [
+            DiscoveredSource(
+                provider=self.id,
+                path=p,
+                kind="local_rollout_dir",
+                exists=p.exists() and p.is_dir(),
             )
-        return sources
+            for p in chosen
+        ]
 
     def parse(self, source: DiscoveredSource, range_: DateRange) -> Iterator[UsageEvent]:
         if not source.exists:

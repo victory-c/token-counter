@@ -224,7 +224,7 @@ def test_cli_dashboard_writes_file(tmp_path):
     out = tmp_path / "dash.html"
     r = runner.invoke(
         app,
-        ["dashboard", "--month", "2026-04", "--output", str(out), "--config", str(cfg_path)],
+        ["dashboard", "--month", "2026-04", "--output", str(out), "--config", str(cfg_path), "--no-scan"],
     )
     assert r.exit_code == 0, r.output
     assert out.exists()
@@ -240,7 +240,7 @@ def test_cli_export_month_writes_both(tmp_path):
 
     r = runner.invoke(
         app,
-        ["export-month", "--month", "2026-04", "--output-dir", str(tmp_path), "--config", str(cfg_path)],
+        ["export-month", "--month", "2026-04", "--output-dir", str(tmp_path), "--config", str(cfg_path), "--no-scan"],
     )
     assert r.exit_code == 0, r.output
     md = tmp_path / "tokenburn-report-2026-04.md"
@@ -248,3 +248,50 @@ def test_cli_export_month_writes_both(tmp_path):
     assert md.exists() and html.exists()
     assert "# AI Coding Agent Token Burn Report" in md.read_text()
     assert "tokenburn-data" in html.read_text()
+
+
+def _init_cfg_claude_fixture(runner: CliRunner, tmp_path: Path) -> Path:
+    """Config whose only enabled provider points at the bundled Claude fixture,
+    so a default-scan stays hermetic (no real ~/.claude access)."""
+    cfg_path = tmp_path / "tb.yaml"
+    runner.invoke(app, ["init", "--path", str(cfg_path)])
+    raw = yaml.safe_load(cfg_path.read_text())
+    raw["db_path"] = str(tmp_path / "tb.sqlite")
+    raw["timezone"] = "UTC"
+    claude_dir = Path(__file__).parent / "fixtures" / "claude"
+    raw["providers"]["claude_code"]["paths"] = [str(claude_dir)]
+    for name in ("codex", "cursor", "gemini"):
+        raw["providers"][name]["enabled"] = False
+    cfg_path.write_text(yaml.safe_dump(raw))
+    return cfg_path
+
+
+def test_cli_dashboard_scans_by_default(tmp_path):
+    runner = CliRunner()
+    cfg_path = _init_cfg_claude_fixture(runner, tmp_path)
+
+    out = tmp_path / "dash.html"
+    r = runner.invoke(
+        app,
+        ["dashboard", "--month", "2026-04", "--output", str(out), "--config", str(cfg_path)],
+    )
+    assert r.exit_code == 0, r.output
+    assert "No usage events found" not in r.output
+    # The fixture's tokens made it into the embedded payload via the auto-scan.
+    data = json.loads(re.search(r'type="application/json">(.*?)</script>', out.read_text(), re.S).group(1).replace("<\\/", "</"))
+    assert data["sessions"], "auto-scan should have ingested the Claude fixture"
+
+
+def test_cli_dashboard_no_scan_warns_when_empty(tmp_path):
+    runner = CliRunner()
+    cfg_path = _init_cfg(runner, tmp_path)
+
+    out = tmp_path / "dash.html"
+    r = runner.invoke(
+        app,
+        ["dashboard", "--month", "2026-04", "--output", str(out), "--config", str(cfg_path), "--no-scan"],
+    )
+    assert r.exit_code == 0, r.output
+    assert out.exists()
+    assert "No usage events found" in r.output
+    assert "Sources checked" in r.output

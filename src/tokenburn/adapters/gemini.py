@@ -9,6 +9,7 @@ from ..models import Confidence, DateRange, UsageEvent
 from ..privacy import project_identity
 from ..util.dates import local_date, parse_iso
 from ..util.hashing import event_id
+from ..util.paths import resolve_log_dirs
 from .base import DiscoveredSource, ProviderAdapter
 
 
@@ -17,6 +18,7 @@ class GeminiAdapter(ProviderAdapter):
     display_name = "Gemini"
 
     def discover(self) -> list[DiscoveredSource]:
+        # Manual-import drop zone is always shown (primary path for Gemini).
         sources = []
         import_dir = self.provider_config.import_dir or "~/.tokenburn/imports/gemini"
         p = expand(import_dir)
@@ -28,14 +30,23 @@ class GeminiAdapter(ProviderAdapter):
                 exists=p.exists() and p.is_dir(),
             )
         )
-        for raw in self.provider_config.paths or []:
-            ep = expand(raw)
+        # Plus auto-probe explicit config paths and common Gemini CLI homes
+        # (GEMINI_HOME, ~/.gemini/tmp) — only surfaced when they actually exist,
+        # since Gemini's local-log format is less standardized than the import.
+        candidates = resolve_log_dirs(
+            self.provider_config.paths,
+            env_subdirs=[("GEMINI_HOME", "tmp")],
+            fallbacks=["~/.gemini/tmp"],
+        )
+        for ep in candidates:
+            if ep == p or not (ep.exists() and ep.is_dir()):
+                continue
             sources.append(
                 DiscoveredSource(
                     provider=self.id,
                     path=ep,
                     kind="local_jsonl_dir",
-                    exists=ep.exists(),
+                    exists=True,
                 )
             )
         return sources

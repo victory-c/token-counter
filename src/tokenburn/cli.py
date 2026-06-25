@@ -259,6 +259,34 @@ def _open_in_browser(path: Path) -> bool:
         return False
 
 
+def _ingest(cfg: AppConfig, db, rng: DateRange, provider: str | None) -> int:
+    """Scan each enabled provider's discovered sources into the DB.
+
+    Shared by `report`, `dashboard`, and `export-month` so they all ingest
+    fresh data the same way. Returns the number of events ingested.
+    """
+    from .db import upsert_events
+
+    pricing = PricingTable.load(default_pricing_path()) if default_pricing_path().exists() else None
+    targets = [provider] if provider else [n for n, pcfg in cfg.providers.items() if pcfg.enabled]
+    total = 0
+    for name in targets:
+        pcfg = cfg.providers.get(name)
+        if not pcfg or not pcfg.enabled:
+            continue
+        adapter = _adapter_for(name, cfg)
+        for src in (s for s in adapter.discover() if s.exists):
+            batch: list = []
+            for ev in adapter.parse(src, rng):
+                if pricing is not None:
+                    ev.estimated_cost_usd = estimate_cost(ev, pricing)
+                batch.append(ev)
+            if batch:
+                upsert_events(db, batch)
+                total += len(batch)
+    return total
+
+
 @app.command()
 def report(
     month: str | None = typer.Option(None, "--month", help="YYYY-MM"),
@@ -273,28 +301,8 @@ def report(
     cfg = load_config(config or DEFAULT_CONFIG_PATH)
     rng = _resolve_range(month, frm, to, cfg.timezone)
     db = open_db(expand(cfg.db_path))
-    pricing = PricingTable.load(default_pricing_path()) if default_pricing_path().exists() else None
 
-    targets = [provider] if provider else [n for n, pcfg in cfg.providers.items() if pcfg.enabled]
-    total_ingested = 0
-
-    if not no_scan:
-        for name in targets:
-            pcfg = cfg.providers.get(name)
-            if not pcfg or not pcfg.enabled:
-                continue
-            adapter = _adapter_for(name, cfg)
-            sources = [s for s in adapter.discover() if s.exists]
-            for src in sources:
-                batch: list = []
-                for ev in adapter.parse(src, rng):
-                    if pricing is not None:
-                        ev.estimated_cost_usd = estimate_cost(ev, pricing)
-                    batch.append(ev)
-                if batch:
-                    from .db import upsert_events
-                    upsert_events(db, batch)
-                    total_ingested += len(batch)
+    total_ingested = 0 if no_scan else _ingest(cfg, db, rng, provider)
 
     from .reports.monthly import render_monthly_report
     render_monthly_report(db, rng, cfg, console, provider_filter=provider)
@@ -404,6 +412,37 @@ def _build_dashboard_html(db, rng: DateRange, cfg: AppConfig, provider_filter: s
     return render_dashboard_html(payload)
 
 
+def _warn_if_empty(cfg: AppConfig, db, rng: DateRange, provider: str | None) -> None:
+    """When a range has no events, tell the user where we looked.
+
+    This is the difference between a baffling blank dashboard and an actionable
+    "your logs aren't where I expected" message.
+    """
+    params: dict = {"s": rng.start.isoformat(), "e": rng.end.isoformat()}
+    where = "local_date BETWEEN :s AND :e"
+    if provider:
+        where += " AND provider = :p"
+        params["p"] = provider
+    row = next(iter(db.query(f"SELECT COUNT(*) AS n FROM usage_events WHERE {where}", params)), {"n": 0})
+    if int(row.get("n") or 0) > 0:
+        return
+
+    console.print(f"[yellow]No usage events found for {rng.start} → {rng.end}.[/yellow]")
+    console.print("[dim]Sources checked:[/dim]")
+    names = [provider] if provider else [n for n, p in cfg.providers.items() if p.enabled]
+    for name in names:
+        pcfg = cfg.providers.get(name)
+        if not pcfg or not pcfg.enabled:
+            continue
+        for s in _adapter_for(name, cfg).discover():
+            mark = "[green]found[/green]" if s.exists else "[red]missing[/red]"
+            console.print(f"  [dim]{name}:[/dim] {s.path} ({mark})")
+    console.print(
+        "[dim]If a path is missing, set it under providers.<name>.paths in your config, "
+        "or `tokencounter import cursor|gemini <file>` for manual exports.[/dim]"
+    )
+
+
 @app.command()
 def dashboard(
     month: str | None = typer.Option(None, "--month", help="YYYY-MM"),
@@ -412,12 +451,20 @@ def dashboard(
     provider: str | None = typer.Option(None, "--provider", help="Limit to one provider"),
     output: Path | None = typer.Option(None, "--output", help="Write to this file (overrides default ~/Downloads path)"),
     open_: bool = typer.Option(False, "--open", help="Open the dashboard in the default browser"),
+    no_scan: bool = typer.Option(False, "--no-scan", help="Skip scanning sources; use the existing DB only"),
     config: Path | None = typer.Option(None, help="Config path"),
 ) -> None:
-    """Generate a standalone interactive HTML dashboard (no re-scan)."""
+    """Generate a standalone interactive HTML dashboard.
+
+    Scans your configured log sources into the DB first (use --no-scan to skip
+    and render from existing data only).
+    """
     cfg = load_config(config or DEFAULT_CONFIG_PATH)
     rng = _resolve_range(month, frm, to, cfg.timezone)
     db = open_db(expand(cfg.db_path))
+
+    if not no_scan:
+        _ingest(cfg, db, rng, provider)
 
     html = _build_dashboard_html(db, rng, cfg, provider)
 
@@ -433,6 +480,7 @@ def dashboard(
 
     out_path.write_text(html)
     console.print(f"[green]Generated interactive HTML dashboard:[/green] {out_path}")
+    _warn_if_empty(cfg, db, rng, provider)
 
     if open_ or cfg.dashboard.auto_open:
         if _open_in_browser(out_path):
@@ -450,17 +498,22 @@ def export_month(
     output_dir: Path | None = typer.Option(None, "--output-dir", help="Directory for both files (default ~/Downloads)"),
     by_task: bool = typer.Option(False, "--by-task", help="Include task-classification sections in the Markdown report"),
     open_dashboard: bool = typer.Option(False, "--open-dashboard", help="Open the dashboard after generating"),
+    no_scan: bool = typer.Option(False, "--no-scan", help="Skip scanning sources; use the existing DB only"),
     config: Path | None = typer.Option(None, help="Config path"),
 ) -> None:
-    """Generate BOTH the Markdown report and the HTML dashboard (no re-scan).
+    """Generate BOTH the Markdown report and the HTML dashboard.
 
-    The two outputs are parallel and never overwrite each other. If one fails,
-    the other is still written and the failure is reported.
+    Scans your configured log sources first (use --no-scan to skip). The two
+    outputs are parallel and never overwrite each other. If one fails, the
+    other is still written and the failure is reported.
     """
     cfg = load_config(config or DEFAULT_CONFIG_PATH)
     rng = _resolve_range(month, frm, to, cfg.timezone)
     db = open_db(expand(cfg.db_path))
     label = _range_label(month, rng)
+
+    if not no_scan:
+        _ingest(cfg, db, rng, provider)
 
     out_dir, warning = _resolve_output_dir(cfg, output_dir)
     if warning:
@@ -504,6 +557,8 @@ def export_month(
         console.print("[dim]The dashboard was saved successfully.[/dim]")
     else:
         raise typer.Exit(code=1)
+
+    _warn_if_empty(cfg, db, rng, provider)
 
     if open_dashboard and html_ok:
         if _open_in_browser(html_path):

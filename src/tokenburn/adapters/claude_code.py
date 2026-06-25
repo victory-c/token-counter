@@ -10,12 +10,11 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from ..config import expand
 from ..models import Confidence, DateRange, UsageEvent
 from ..privacy import project_identity
 from ..util.dates import local_date, parse_iso
 from ..util.hashing import event_id
-from ..util.paths import decode_claude_project_dir
+from ..util.paths import decode_claude_project_dir, resolve_log_dirs
 from .base import DiscoveredSource, ProviderAdapter
 
 
@@ -24,18 +23,26 @@ class ClaudeCodeAdapter(ProviderAdapter):
     display_name = "Claude Code"
 
     def discover(self) -> list[DiscoveredSource]:
-        sources = []
-        for raw in self.provider_config.paths or ["~/.claude/projects"]:
-            p = expand(raw)
-            sources.append(
-                DiscoveredSource(
-                    provider=self.id,
-                    path=p,
-                    kind="local_jsonl_dir",
-                    exists=p.exists() and p.is_dir(),
-                )
+        # Probe a custom CLAUDE_CONFIG_DIR, then the default and XDG locations,
+        # so a clone finds logs regardless of how the CLI was set up.
+        candidates = resolve_log_dirs(
+            self.provider_config.paths,
+            env_subdirs=[("CLAUDE_CONFIG_DIR", "projects")],
+            fallbacks=["~/.claude/projects", "~/.config/claude/projects"],
+        )
+        existing = [p for p in candidates if p.exists() and p.is_dir()]
+        # Keep all that exist; if none do, surface the canonical default so the
+        # user can see where we looked.
+        chosen = existing or candidates[:1]
+        return [
+            DiscoveredSource(
+                provider=self.id,
+                path=p,
+                kind="local_jsonl_dir",
+                exists=p.exists() and p.is_dir(),
             )
-        return sources
+            for p in chosen
+        ]
 
     def parse(self, source: DiscoveredSource, range_: DateRange) -> Iterator[UsageEvent]:
         if not source.exists:
