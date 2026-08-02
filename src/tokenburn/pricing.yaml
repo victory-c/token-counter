@@ -328,3 +328,26 @@ prices:
     cache_write_per_million_usd: 0.3125
     cache_read_per_million_usd: 0.3125
     source_url: https://ai.google.dev/pricing
+
+  # Gemini 3.6 Flash Standard pricing checked 2026-07-31.
+  # The public page lists context-caching token price as $0.15/M; the
+  # separate $1.00/M-hour figure is cache storage, not token usage.
+  - provider: gemini
+    model: gemini-3.6-flash
+    effective_date: 2026-07-01
+    input_per_million_usd: 1.50
+    output_per_million_usd: 7.50
+    cache_write_per_million_usd: 0.15
+    cache_read_per_million_usd: 0.15
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  # Antigravity's "high" label is a serving/thinking mode for the same
+  # Gemini 3.6 Flash family; no separate public API model price is listed.
+  - provider: gemini
+    model: gemini-3.6-flash-high
+    effective_date: 2026-07-01
+    input_per_million_usd: 1.50
+    output_per_million_usd: 7.50
+    cache_write_per_million_usd: 0.15
+    cache_read_per_million_usd: 0.15
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
