@@ -139,10 +139,85 @@ def _timestamp_from_step_metadata(metadata: bytes) -> datetime | None:
         return None
 
 
+def _gen_metadata_records(blob: bytes) -> Iterator[list[tuple[int, int, int | bytes]]]:
+    """Yield the per-generation metadata messages nested in field 1."""
+    try:
+        outer = _protobuf_fields(blob)
+    except ValueError:
+        return
+    for number, wire, value in outer:
+        if number != 1 or wire != 2 or not isinstance(value, bytes):
+            continue
+        try:
+            yield _protobuf_fields(value)
+        except ValueError:
+            continue
+
+
+def _metadata_entries(blob: bytes) -> dict[str, str]:
+    """Decode the string→string metadata map stored in gen_metadata."""
+    out: dict[str, str] = {}
+    for fields in _gen_metadata_records(blob):
+        for number, wire, value in fields:
+            if number != 20 or wire != 2 or not isinstance(value, bytes):
+                continue
+            try:
+                entry = _protobuf_fields(value)
+            except ValueError:
+                continue
+            if len(entry) != 2 or [
+                (entry_number, entry_wire) for entry_number, entry_wire, _ in entry
+            ] != [(1, 2), (2, 2)]:
+                continue
+            key_raw, value_raw = entry[0][2], entry[1][2]
+            if not isinstance(key_raw, bytes) or not isinstance(value_raw, bytes):
+                continue
+            try:
+                key = key_raw.decode("utf-8")
+                metadata_value = value_raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            if re.fullmatch(r"[a-z0-9_]{3,40}", key):
+                out.setdefault(key, metadata_value)
+    return out
+
+
+def _model_ids(blob: bytes) -> list[str]:
+    """Every selected model id (field 19) in generation metadata, most common first."""
+    counts: dict[str, int] = {}
+    for fields in _gen_metadata_records(blob):
+        for number, wire, raw in fields:
+            if number != 19 or wire != 2 or not isinstance(raw, bytes):
+                continue
+            try:
+                name = raw.decode("ascii")
+            except UnicodeDecodeError:
+                continue
+            if re.fullmatch(r"(?:claude|gemini|gpt)[a-z0-9._-]{3,60}", name):
+                counts[name] = counts.get(name, 0) + 1
+    return sorted(counts, key=lambda n: (-counts[n], n))
+
+
 def _model_from_blob(blob: bytes) -> str | None:
-    text = blob.decode("utf-8", "ignore")
-    match = re.search(r"gemini[-_][a-zA-Z0-9._-]+", text, re.IGNORECASE)
-    return match.group(0) if match else None
+    """Identify the model behind an Antigravity conversation.
+
+    Antigravity records the selected model in field 19 of each generation's
+    metadata: a concrete vendor id (`claude-opus-4-6-thinking`) when routing to
+    another vendor, or an internal label (`gemini-pro-default`) for its own
+    models. A conversation can switch models, so use the most frequently
+    selected id rather than allowing any earlier vendor id to override it.
+
+    Never scrape the surrounding transcript: gen_metadata stores conversation
+    text next to the metadata, so a loose match reports fragments of the user's
+    own source as model names.
+    """
+    ids = _model_ids(blob)
+    if ids:
+        return ids[0]
+    enum_name = _metadata_entries(blob).get("model_enum", "")
+    if enum_name:
+        return "antigravity-" + enum_name.removeprefix("MODEL_").lower().replace("_", "-")
+    return None
 
 
 class GeminiAdapter(ProviderAdapter):
@@ -184,7 +259,9 @@ class GeminiAdapter(ProviderAdapter):
         for f in files:
             yield from self._parse_jsonl(f, range_, tz, privacy)
 
-    def _parse_antigravity(self, root: Path, range_: DateRange, tz: str, privacy) -> Iterator[UsageEvent]:
+    def _parse_antigravity(
+        self, root: Path, range_: DateRange, tz: str, privacy
+    ) -> Iterator[UsageEvent]:
         conversation_dir = root / "conversations"
         for path in sorted(conversation_dir.glob("*.db")):
             connection: sqlite3.Connection | None = None
@@ -264,7 +341,11 @@ class GeminiAdapter(ProviderAdapter):
                 output_tokens = int(meta.get("candidatesTokenCount") or 0)
                 cache_read = int(meta.get("cachedContentTokenCount") or 0)
                 total_meta = meta.get("totalTokenCount")
-                total = int(total_meta) if total_meta is not None else (input_tokens + output_tokens + cache_read)
+                total = (
+                    int(total_meta)
+                    if total_meta is not None
+                    else (input_tokens + output_tokens + cache_read)
+                )
 
                 project = rec.get("project_path") or rec.get("cwd")
                 project, project_hash = project_identity(project, privacy)

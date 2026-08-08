@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 import tokenburn
 from tokenburn.models import Confidence, UsageEvent
 from tokenburn.pricing import PricingTable, default_pricing_path, estimate_cost
@@ -22,6 +24,33 @@ def test_pricing_lookup_prefix_match_for_versioned_model():
     row = table.lookup("claude_code", "claude-sonnet-4-5-20251029", datetime(2026, 4, 15))
     assert row is not None
     assert row.model == "claude-sonnet-4"
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "expected"),
+    [
+        ("claude_code", "claude-opus-5", (5.0, 25.0, 6.25, 0.5)),
+        ("claude_code", "gpt-5.5", (5.0, 30.0, 0.0, 0.5)),
+        ("codex", "gpt-5.3-codex", (1.75, 14.0, 0.0, 0.175)),
+        ("codex", "gpt-5.4", (2.5, 15.0, 0.0, 0.25)),
+        ("codex", "gpt-5.4-mini", (0.75, 4.5, 0.0, 0.075)),
+        ("codex", "gpt-5.5", (5.0, 30.0, 0.0, 0.5)),
+        ("codex", "gpt-5.6-sol", (5.0, 30.0, 6.25, 0.5)),
+        ("codex", "gpt-5.6-terra", (2.5, 15.0, 3.125, 0.25)),
+    ],
+)
+def test_corrected_model_rates(provider: str, model: str, expected: tuple[float, ...]):
+    table = PricingTable.load(default_pricing_path())
+
+    row = table.lookup(provider, model, datetime(2026, 8, 9))
+
+    assert row is not None
+    assert (
+        row.input_per_million_usd,
+        row.output_per_million_usd,
+        row.cache_write_per_million_usd,
+        row.cache_read_per_million_usd,
+    ) == expected
 
 
 def test_estimate_cost_handles_all_token_dimensions():
