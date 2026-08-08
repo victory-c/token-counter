@@ -75,6 +75,42 @@ prices:
   - provider: claude_code
     model: claude-opus-4-6
     effective_date: 2025-10-15
+    input_per_million_usd: 5.00
+    output_per_million_usd: 25.00
+    cache_write_per_million_usd: 6.25
+    cache_read_per_million_usd: 0.50
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-opus-4-7
+    effective_date: 2026-01-15
+    input_per_million_usd: 5.00
+    output_per_million_usd: 25.00
+    cache_write_per_million_usd: 6.25
+    cache_read_per_million_usd: 0.50
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-opus-4-5
+    effective_date: 2025-12-01
+    input_per_million_usd: 5.00
+    output_per_million_usd: 25.00
+    cache_write_per_million_usd: 6.25
+    cache_read_per_million_usd: 0.50
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-opus-4-8
+    effective_date: 2026-05-01
+    input_per_million_usd: 5.00
+    output_per_million_usd: 25.00
+    cache_write_per_million_usd: 6.25
+    cache_read_per_million_usd: 0.50
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-opus-4-1
+    effective_date: 2025-08-01
     input_per_million_usd: 15.00
     output_per_million_usd: 75.00
     cache_write_per_million_usd: 18.75
@@ -82,13 +118,78 @@ prices:
     source_url: https://www.anthropic.com/pricing
 
   - provider: claude_code
-    model: claude-opus-4-7
-    effective_date: 2026-01-15
-    input_per_million_usd: 15.00
-    output_per_million_usd: 75.00
-    cache_write_per_million_usd: 18.75
-    cache_read_per_million_usd: 1.50
+    model: claude-opus-5
+    effective_date: 2026-07-01
+    input_per_million_usd: 5.00
+    output_per_million_usd: 25.00
+    cache_write_per_million_usd: 6.25
+    cache_read_per_million_usd: 0.50
+    source_url: https://docs.claude.com/en/docs/about-claude/pricing
+
+  - provider: claude_code
+    model: claude-sonnet-5
+    effective_date: 2026-06-01
+    input_per_million_usd: 2.00
+    output_per_million_usd: 10.00
+    cache_write_per_million_usd: 2.50
+    cache_read_per_million_usd: 0.20
     source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-sonnet-5
+    effective_date: 2026-09-01
+    input_per_million_usd: 3.00
+    output_per_million_usd: 15.00
+    cache_write_per_million_usd: 3.75
+    cache_read_per_million_usd: 0.30
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-fable-5
+    effective_date: 2026-06-01
+    input_per_million_usd: 10.00
+    output_per_million_usd: 50.00
+    cache_write_per_million_usd: 12.50
+    cache_read_per_million_usd: 1.00
+    source_url: https://www.anthropic.com/pricing
+
+  - provider: claude_code
+    model: claude-mythos-5
+    effective_date: 2026-06-01
+    input_per_million_usd: 10.00
+    output_per_million_usd: 50.00
+    cache_write_per_million_usd: 12.50
+    cache_read_per_million_usd: 1.00
+    source_url: https://www.anthropic.com/pricing
+
+  # ---- Non-Anthropic models routed through Claude Code ----
+  # Claude Code can drive third-party models; usage still lands in the
+  # claude_code logs, so they need claude_code-scoped rows. Rates are the
+  # upstream vendor's list price — i.e. "what this would have cost called
+  # directly". Checked 2026-08-09.
+
+  # Also covers `gpt-5.5-review` by prefix match. OpenAI standard tier,
+  # short context; gpt-5.5 has no separate cache-write charge.
+  - provider: claude_code
+    model: gpt-5.5
+    effective_date: 2026-03-01
+    input_per_million_usd: 5.00
+    output_per_million_usd: 30.00
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.50
+    source_url: https://platform.openai.com/docs/pricing
+
+  # Open-weights model run locally (Ollama). Self-hosted inference has no
+  # vendor list price, so API-equivalent cost is genuinely zero — this row
+  # exists so the model reads as deliberately free, not as missing pricing.
+  - provider: claude_code
+    model: gpt-oss:120b
+    effective_date: 2026-07-01
+    input_per_million_usd: 0.0
+    output_per_million_usd: 0.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.0
+    source_url: https://ollama.com/library/gpt-oss
 
   # ---------------- OpenAI / Codex ----------------
   - provider: codex
@@ -135,6 +236,19 @@ prices:
     cache_write_per_million_usd: 1.25
     cache_read_per_million_usd: 0.125
     source_url: https://openai.com/api/pricing/
+
+  # Codex CLI's automated review pass. Not a published OpenAI model — the
+  # underlying model is not disclosed in the rollout logs, so we cannot
+  # attach a list price. Held at zero on the same basis as the Cursor
+  # internal models below; revisit if Codex starts logging the real model.
+  - provider: codex
+    model: codex-auto-review
+    effective_date: 2026-05-01
+    input_per_million_usd: 0.0
+    output_per_million_usd: 0.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.0
+    source_url: https://platform.openai.com/docs/pricing
 
   - provider: codex
     model: gpt-5.3-codex
