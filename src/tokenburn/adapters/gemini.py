@@ -139,70 +139,79 @@ def _timestamp_from_step_metadata(metadata: bytes) -> datetime | None:
         return None
 
 
-# gen_metadata holds protobuf map<string, string> entries alongside the raw
-# conversation transcript. Matching `\n <klen> key \x12 <vlen> value` and then
-# checking both declared lengths keeps us on real entries instead of whatever
-# the transcript happens to contain.
-_METADATA_ENTRY = re.compile(rb"\x0a([\x01-\x7f])([ -~]+?)\x12([\x01-\x7f])([ -~]+)")
-
-# Length-prefixed vendor model ids, e.g. b"\x18claude-opus-4-6-thinking".
-_MODEL_ID = re.compile(rb"([\x08-\x40])((?:claude|gemini|gpt)[a-z0-9._-]{3,60})")
-
-_MODEL_KEYS = ("model_enum",)
+def _gen_metadata_records(blob: bytes) -> Iterator[list[tuple[int, int, int | bytes]]]:
+    """Yield the per-generation metadata messages nested in field 1."""
+    try:
+        outer = _protobuf_fields(blob)
+    except ValueError:
+        return
+    for number, wire, value in outer:
+        if number != 1 or wire != 2 or not isinstance(value, bytes):
+            continue
+        try:
+            yield _protobuf_fields(value)
+        except ValueError:
+            continue
 
 
 def _metadata_entries(blob: bytes) -> dict[str, str]:
     """Decode the string→string metadata map stored in gen_metadata."""
     out: dict[str, str] = {}
-    for match in _METADATA_ENTRY.finditer(blob):
-        key_len, key_raw, value_len, value_raw = (
-            match.group(1)[0],
-            match.group(2),
-            match.group(3)[0],
-            match.group(4),
-        )
-        if len(key_raw) < key_len or len(value_raw) < value_len:
-            continue
-        key = key_raw[:key_len].decode("utf-8", "ignore")
-        value = value_raw[:value_len].decode("utf-8", "ignore")
-        if len(key) != key_len or len(value) != value_len:
-            continue
-        if re.fullmatch(r"[a-z0-9_]{3,40}", key):
-            out.setdefault(key, value)
+    for fields in _gen_metadata_records(blob):
+        for number, wire, value in fields:
+            if number != 20 or wire != 2 or not isinstance(value, bytes):
+                continue
+            try:
+                entry = _protobuf_fields(value)
+            except ValueError:
+                continue
+            if len(entry) != 2 or [
+                (entry_number, entry_wire) for entry_number, entry_wire, _ in entry
+            ] != [(1, 2), (2, 2)]:
+                continue
+            key_raw, value_raw = entry[0][2], entry[1][2]
+            if not isinstance(key_raw, bytes) or not isinstance(value_raw, bytes):
+                continue
+            try:
+                key = key_raw.decode("utf-8")
+                metadata_value = value_raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            if re.fullmatch(r"[a-z0-9_]{3,40}", key):
+                out.setdefault(key, metadata_value)
     return out
 
 
 def _model_ids(blob: bytes) -> list[str]:
-    """Every length-prefixed vendor model id in the blob, most common first."""
+    """Every selected model id (field 19) in generation metadata, most common first."""
     counts: dict[str, int] = {}
-    for match in _MODEL_ID.finditer(blob):
-        declared, raw = match.group(1)[0], match.group(2)
-        if len(raw) < declared:
-            continue
-        name = raw[:declared].decode("utf-8", "ignore")
-        if len(name) != declared or not re.fullmatch(r"[a-z0-9._-]+", name):
-            continue
-        counts[name] = counts.get(name, 0) + 1
+    for fields in _gen_metadata_records(blob):
+        for number, wire, raw in fields:
+            if number != 19 or wire != 2 or not isinstance(raw, bytes):
+                continue
+            try:
+                name = raw.decode("ascii")
+            except UnicodeDecodeError:
+                continue
+            if re.fullmatch(r"(?:claude|gemini|gpt)[a-z0-9._-]{3,60}", name):
+                counts[name] = counts.get(name, 0) + 1
     return sorted(counts, key=lambda n: (-counts[n], n))
 
 
 def _model_from_blob(blob: bytes) -> str | None:
     """Identify the model behind an Antigravity conversation.
 
-    Antigravity records a concrete vendor model id (`claude-opus-4-6-thinking`)
-    for requests it routes to another vendor, but only an internal routing
-    label (`gemini-pro-default`) plus a placeholder enum for its own Gemini
-    models. Concrete ids carry a version number and routing labels do not, so
-    prefer an id containing a digit and fall back to the label.
+    Antigravity records the selected model in field 19 of each generation's
+    metadata: a concrete vendor id (`claude-opus-4-6-thinking`) when routing to
+    another vendor, or an internal label (`gemini-pro-default`) for its own
+    models. A conversation can switch models, so use the most frequently
+    selected id rather than allowing any earlier vendor id to override it.
 
     Never scrape the surrounding transcript: gen_metadata stores conversation
     text next to the metadata, so a loose match reports fragments of the user's
     own source as model names.
     """
     ids = _model_ids(blob)
-    for name in ids:
-        if any(ch.isdigit() for ch in name):
-            return name
     if ids:
         return ids[0]
     enum_name = _metadata_entries(blob).get("model_enum", "")
@@ -250,7 +259,9 @@ class GeminiAdapter(ProviderAdapter):
         for f in files:
             yield from self._parse_jsonl(f, range_, tz, privacy)
 
-    def _parse_antigravity(self, root: Path, range_: DateRange, tz: str, privacy) -> Iterator[UsageEvent]:
+    def _parse_antigravity(
+        self, root: Path, range_: DateRange, tz: str, privacy
+    ) -> Iterator[UsageEvent]:
         conversation_dir = root / "conversations"
         for path in sorted(conversation_dir.glob("*.db")):
             connection: sqlite3.Connection | None = None
@@ -330,7 +341,11 @@ class GeminiAdapter(ProviderAdapter):
                 output_tokens = int(meta.get("candidatesTokenCount") or 0)
                 cache_read = int(meta.get("cachedContentTokenCount") or 0)
                 total_meta = meta.get("totalTokenCount")
-                total = int(total_meta) if total_meta is not None else (input_tokens + output_tokens + cache_read)
+                total = (
+                    int(total_meta)
+                    if total_meta is not None
+                    else (input_tokens + output_tokens + cache_read)
+                )
 
                 project = rec.get("project_path") or rec.get("cwd")
                 project, project_hash = project_identity(project, privacy)
