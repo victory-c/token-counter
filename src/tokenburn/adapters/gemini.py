@@ -139,10 +139,76 @@ def _timestamp_from_step_metadata(metadata: bytes) -> datetime | None:
         return None
 
 
+# gen_metadata holds protobuf map<string, string> entries alongside the raw
+# conversation transcript. Matching `\n <klen> key \x12 <vlen> value` and then
+# checking both declared lengths keeps us on real entries instead of whatever
+# the transcript happens to contain.
+_METADATA_ENTRY = re.compile(rb"\x0a([\x01-\x7f])([ -~]+?)\x12([\x01-\x7f])([ -~]+)")
+
+# Length-prefixed vendor model ids, e.g. b"\x18claude-opus-4-6-thinking".
+_MODEL_ID = re.compile(rb"([\x08-\x40])((?:claude|gemini|gpt)[a-z0-9._-]{3,60})")
+
+_MODEL_KEYS = ("model_enum",)
+
+
+def _metadata_entries(blob: bytes) -> dict[str, str]:
+    """Decode the string→string metadata map stored in gen_metadata."""
+    out: dict[str, str] = {}
+    for match in _METADATA_ENTRY.finditer(blob):
+        key_len, key_raw, value_len, value_raw = (
+            match.group(1)[0],
+            match.group(2),
+            match.group(3)[0],
+            match.group(4),
+        )
+        if len(key_raw) < key_len or len(value_raw) < value_len:
+            continue
+        key = key_raw[:key_len].decode("utf-8", "ignore")
+        value = value_raw[:value_len].decode("utf-8", "ignore")
+        if len(key) != key_len or len(value) != value_len:
+            continue
+        if re.fullmatch(r"[a-z0-9_]{3,40}", key):
+            out.setdefault(key, value)
+    return out
+
+
+def _model_ids(blob: bytes) -> list[str]:
+    """Every length-prefixed vendor model id in the blob, most common first."""
+    counts: dict[str, int] = {}
+    for match in _MODEL_ID.finditer(blob):
+        declared, raw = match.group(1)[0], match.group(2)
+        if len(raw) < declared:
+            continue
+        name = raw[:declared].decode("utf-8", "ignore")
+        if len(name) != declared or not re.fullmatch(r"[a-z0-9._-]+", name):
+            continue
+        counts[name] = counts.get(name, 0) + 1
+    return sorted(counts, key=lambda n: (-counts[n], n))
+
+
 def _model_from_blob(blob: bytes) -> str | None:
-    text = blob.decode("utf-8", "ignore")
-    match = re.search(r"gemini[-_][a-zA-Z0-9._-]+", text, re.IGNORECASE)
-    return match.group(0) if match else None
+    """Identify the model behind an Antigravity conversation.
+
+    Antigravity records a concrete vendor model id (`claude-opus-4-6-thinking`)
+    for requests it routes to another vendor, but only an internal routing
+    label (`gemini-pro-default`) plus a placeholder enum for its own Gemini
+    models. Concrete ids carry a version number and routing labels do not, so
+    prefer an id containing a digit and fall back to the label.
+
+    Never scrape the surrounding transcript: gen_metadata stores conversation
+    text next to the metadata, so a loose match reports fragments of the user's
+    own source as model names.
+    """
+    ids = _model_ids(blob)
+    for name in ids:
+        if any(ch.isdigit() for ch in name):
+            return name
+    if ids:
+        return ids[0]
+    enum_name = _metadata_entries(blob).get("model_enum", "")
+    if enum_name:
+        return "antigravity-" + enum_name.removeprefix("MODEL_").lower().replace("_", "-")
+    return None
 
 
 class GeminiAdapter(ProviderAdapter):
