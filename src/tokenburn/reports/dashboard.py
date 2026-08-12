@@ -16,11 +16,19 @@ Design notes
   monthly view (a session rarely straddles days), surfaced as a caveat.
 * Privacy: we never persist raw prompts/completions/code (see PrivacyConfig),
   so the payload can't leak them. Project paths honour `redact_home_dir`.
+* Progressive enhancement: the interactive view is JS-rendered, but the file
+  must never look empty when scripts don't run (preview panes and snapshot
+  renderers routinely disable them, and a JS error would blank it too). So we
+  *also* server-render a static view that is visible by default; the script
+  only hides it after `init()` completes. Any failure leaves real data on
+  screen. See `render_static_fallback`.
 """
 
 from __future__ import annotations
 
+import html as _html
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -323,11 +331,358 @@ def _range_label_from(range_: DateRange) -> str:
     return f"{range_.start.isoformat()}_to_{range_.end.isoformat()}"
 
 
+# ---------------------------------------------------------------------------
+# Static (no-JavaScript) fallback rendering.
+#
+# Everything below emits plain HTML from the same payload the front-end uses.
+# Every value that originates from a log (project path, model, session id,
+# provider, subscription name, pricing URL) is attacker-influenceable and MUST
+# go through `_esc`. Bars are inline-width spans, so they need no scripting.
+# ---------------------------------------------------------------------------
+
+_PALETTE = (
+    "#5b9cff", "#ff8a5b", "#36d399", "#f7c948",
+    "#b072ff", "#ff6b9d", "#56d4dd", "#9aa3b2",
+)
+
+# Server-rendered session rows are capped independently of the (much larger)
+# payload cap: the static view is a legibility net, not a data export, and the
+# fact table is still embedded in full for the interactive view and CSV export.
+_STATIC_MAX_ROWS = 250
+
+
+def _esc(value: Any) -> str:
+    """HTML-escape a value for text/attribute context; blanks render as an em dash."""
+    if value is None or value == "":
+        return "&mdash;"
+    return _html.escape(str(value), quote=True)
+
+
+def _fmt_int(n: Any) -> str:
+    return f"{round(float(n or 0)):,}"
+
+
+def _fmt_money(n: Any) -> str:
+    return f"${float(n or 0):,.2f}"
+
+
+def _fmt_compact(n: Any) -> str:
+    n = float(n or 0)
+    a = abs(n)
+    if a >= 1e9:
+        return f"{n / 1e9:.2f}B"
+    if a >= 1e6:
+        return f"{n / 1e6:.2f}M"
+    if a >= 1e3:
+        return f"{n / 1e3:.1f}k"
+    return str(round(n))
+
+
+def _group(rows: list[dict[str, Any]], key: str, metric: str) -> list[tuple[str, float]]:
+    out: dict[str, float] = {}
+    fallback = "(unknown)" if key == "model" else "(none)"
+    for r in rows:
+        k = r.get(key) or fallback
+        out[k] = out.get(k, 0.0) + float(r.get(metric) or 0)
+    return sorted(out.items(), key=lambda kv: kv[1], reverse=True)
+
+
+def _bars(pairs: list[tuple[str, float]], fmt, limit: int = 15) -> str:
+    top = pairs[:limit]
+    if not top:
+        return '<div class="muted">No data.</div>'
+    peak = top[0][1] or 1
+    out = []
+    for i, (label, val) in enumerate(top):
+        width = max(1.0, val / peak * 100) if peak else 0.0
+        colour = _PALETTE[i % len(_PALETTE)]
+        out.append(
+            f'<div class="bar-row"><span class="lab" title="{_esc(label)}">{_esc(label)}</span>'
+            f'<span class="track"><span class="fill" style="width:{width:.2f}%;'
+            f'background:{colour}"></span></span>'
+            f'<span class="val">{fmt(val)}</span></div>'
+        )
+    return "".join(out)
+
+
+def _panel(title: str, body: str, hint: str = "") -> str:
+    hint_html = f' <span class="hint">{_esc(hint)}</span>' if hint else ""
+    return f'<div class="panel"><h2>{_esc(title)}{hint_html}</h2>{body}</div>'
+
+
+def _table(headers: list[tuple[str, bool]], body_rows: list[str]) -> str:
+    """Render a table. `headers` is (label, is_numeric); `body_rows` are <tr> strings."""
+    head = "".join(
+        f'<th class="{"num" if num else ""}">{_esc(label)}</th>' for label, num in headers
+    )
+    if not body_rows:
+        body_rows = [f'<tr><td colspan="{len(headers)}" class="muted">No rows.</td></tr>']
+    return (
+        '<div class="tbl-scroll"><table><thead><tr>'
+        + head
+        + "</tr></thead><tbody>"
+        + "".join(body_rows)
+        + "</tbody></table></div>"
+    )
+
+
+def _static_cards(sessions: list[dict[str, Any]], payload: dict[str, Any]) -> str:
+    def total(field: str) -> float:
+        return sum(float(s.get(field) or 0) for s in sessions)
+
+    cost = total("cost")
+    sub_total = float(payload.get("subscription_total_usd") or 0)
+    top_provider = _group(sessions, "provider", "total_tokens")
+    cards = [
+        ("Total tokens", _fmt_int(total("total_tokens"))),
+        ("Input", _fmt_compact(total("input_tokens"))),
+        ("Output", _fmt_compact(total("output_tokens"))),
+        ("Cache read", _fmt_compact(total("cache_read_tokens"))),
+        ("API-equiv cost", _fmt_money(cost)),
+        ("Cash paid", _fmt_money(sub_total)),
+        ("Value multiple", f"{cost / sub_total:.2f}x" if sub_total else "&mdash;"),
+        ("Sessions", _fmt_int(len(sessions))),
+        ("Providers", _fmt_int(len({s.get("provider") for s in sessions}))),
+        ("Models", _fmt_int(len({s.get("model") or "(unknown)" for s in sessions}))),
+        ("Projects", _fmt_int(len({s.get("project") or "(none)" for s in sessions}))),
+        ("Top provider", _esc(top_provider[0][0]) if top_provider else "&mdash;"),
+    ]
+    # Card labels and formatted numbers are app-controlled; only the top-provider
+    # value is log-derived and it is escaped above.
+    return '<div class="cards">' + "".join(
+        f'<div class="card"><div class="k">{_html.escape(k)}</div><div class="v">{v}</div></div>'
+        for k, v in cards
+    ) + "</div>"
+
+
+def _static_daily(sessions: list[dict[str, Any]]) -> str:
+    by_day: dict[str, float] = {}
+    for s in sessions:
+        by_day[s.get("date") or "?"] = by_day.get(s.get("date") or "?", 0.0) + float(
+            s.get("total_tokens") or 0
+        )
+    if not by_day:
+        return '<div class="muted">No data.</div>'
+    days = sorted(by_day)
+    peak = max(by_day.values()) or 1
+    out = []
+    for day in days:
+        val = by_day[day]
+        width = max(1.0, val / peak * 100)
+        out.append(
+            f'<div class="bar-row"><span class="lab">{_esc(day)}</span>'
+            f'<span class="track"><span class="fill" style="width:{width:.2f}%;'
+            f'background:var(--accent)"></span></span>'
+            f'<span class="val">{_fmt_compact(val)}</span></div>'
+        )
+    return "".join(out)
+
+
+def _static_sessions(sessions: list[dict[str, Any]]) -> str:
+    headers = [
+        ("Date", False), ("Provider", False), ("Model", False), ("Project", False),
+        ("Session", False), ("Input", True), ("Output", True), ("Cache R", True),
+        ("Cache W", True), ("Total", True), ("Cost $", True), ("Confidence", False),
+    ]
+    shown = sessions[:_STATIC_MAX_ROWS]
+    rows = []
+    for s in shown:
+        rows.append(
+            "<tr>"
+            f"<td>{_esc(s.get('date'))}</td>"
+            f"<td>{_esc(s.get('provider'))}</td>"
+            f"<td>{_esc(s.get('model'))}</td>"
+            f"<td>{_esc(s.get('project'))}</td>"
+            f'<td><span class="tag">{_esc((s.get("session") or "")[:12])}</span></td>'
+            f'<td class="num">{_fmt_int(s.get("input_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(s.get("output_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(s.get("cache_read_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(s.get("cache_creation_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(s.get("total_tokens"))}</td>'
+            f'<td class="num">{_fmt_money(s.get("cost"))}</td>'
+            f"<td>{_esc(s.get('confidence'))}</td>"
+            "</tr>"
+        )
+    table = _table(headers, rows)
+    if len(sessions) > len(shown):
+        table += (
+            f'<div class="muted" style="margin-top:8px">Showing the top {len(shown):,} of '
+            f"{len(sessions):,} sessions. Enable JavaScript for the full sortable, "
+            "searchable table and CSV export.</div>"
+        )
+    return table
+
+
+def _static_pricing(payload: dict[str, Any]) -> str:
+    headers = [
+        ("Provider", False), ("Model", False), ("Input /M", True), ("Output /M", True),
+        ("Cache W /M", True), ("Cache R /M", True), ("Effective", False), ("Status", False),
+    ]
+
+    def money(x: Any) -> str:
+        return "&mdash;" if x is None else _fmt_money(x)
+
+    rows = []
+    for p in payload.get("pricing", []):
+        status = (
+            '<span class="tag" style="color:#f7c948;border-color:#f7c948">missing</span>'
+            if p.get("status") == "missing"
+            else '<span class="tag">exact</span>'
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{_esc(p.get('provider'))}</td>"
+            f"<td>{_esc(p.get('model'))}</td>"
+            f'<td class="num">{money(p.get("input_per_million_usd"))}</td>'
+            f'<td class="num">{money(p.get("output_per_million_usd"))}</td>'
+            f'<td class="num">{money(p.get("cache_write_per_million_usd"))}</td>'
+            f'<td class="num">{money(p.get("cache_read_per_million_usd"))}</td>'
+            f"<td>{_esc(p.get('effective_date'))}</td>"
+            f"<td>{status}</td>"
+            "</tr>"
+        )
+    return _table(headers, rows)
+
+
+def render_static_fallback(payload: dict[str, Any]) -> str:
+    """Server-rendered no-JavaScript view of the same payload.
+
+    Visible by default; the front-end hides it once `init()` succeeds. This is
+    what makes the artifact readable in preview panes, snapshot renderers, and
+    any environment where the script does not run or throws.
+    """
+    sessions = payload.get("sessions", [])
+    meta = payload.get("meta", {})
+    rng = meta.get("range", {})
+
+    parts: list[str] = [
+        '<div class="static-note" id="tb-static-note">'
+        "<b>Static view.</b> The interactive charts, filters, and CSV export need "
+        "JavaScript — this page is showing the same numbers as plain HTML instead. "
+        "Open this file directly in a browser to get the full dashboard."
+        "</div>",
+        f'<div class="sub" style="margin:8px 0 4px">{_esc(rng.get("start"))} &rarr; '
+        f'{_esc(rng.get("end"))} &middot; {_esc(meta.get("timezone"))}'
+        + (
+            f' &middot; provider: {_esc(meta.get("provider_filter"))}'
+            if meta.get("provider_filter")
+            else ""
+        )
+        + "</div>",
+    ]
+
+    warnings = payload.get("warnings") or []
+    if warnings:
+        parts.append(
+            '<div class="warnings">'
+            + "".join(f'<div class="warn">&#9888; {_esc(w)}</div>' for w in warnings)
+            + "</div>"
+        )
+
+    parts.append(_static_cards(sessions, payload))
+
+    if not sessions:
+        parts.append(
+            _panel("Sessions", '<div class="muted">No usage events in this range.</div>')
+        )
+        return "".join(parts)
+
+    parts.append(
+        '<div class="grid2">'
+        + _panel("Tokens by provider", _bars(_group(sessions, "provider", "total_tokens"), _fmt_compact, 8))
+        + _panel("Cost by provider", _bars(_group(sessions, "provider", "cost"), _fmt_money, 8), "API-equiv $")
+        + "</div>"
+    )
+    parts.append(_panel("Daily usage trend", _static_daily(sessions), "total tokens"))
+    parts.append(
+        '<div class="grid2">'
+        + _panel("Top models", _bars(_group(sessions, "model", "total_tokens"), _fmt_compact))
+        + _panel("Top projects", _bars(_group(sessions, "project", "total_tokens"), _fmt_compact))
+        + "</div>"
+    )
+
+    black_holes = sorted(sessions, key=lambda s: float(s.get("cost") or 0), reverse=True)[:10]
+    parts.append(
+        _panel(
+            "Token black holes",
+            _bars(
+                [
+                    (f"{s.get('provider')} · {s.get('project') or '(none)'}", float(s.get("cost") or 0))
+                    for s in black_holes
+                ],
+                _fmt_money,
+                10,
+            ),
+            "most expensive sessions",
+        )
+    )
+
+    subs = payload.get("subscriptions") or []
+    if subs:
+        parts.append(
+            _panel(
+                "Subscription value",
+                _bars(
+                    [
+                        (
+                            f"{s.get('name')} ({_fmt_money(s.get('api_equiv_value_usd'))}"
+                            f" value / {_fmt_money(s.get('monthly_cost_usd'))} paid)",
+                            float(s.get("value_multiple") or 0),
+                        )
+                        for s in subs
+                    ],
+                    lambda v: f"{v:.1f}x",
+                    12,
+                ),
+                "API-equiv value ÷ cash paid",
+            )
+        )
+
+    parts.append(_panel("Sessions", _static_sessions(sessions)))
+    parts.append(_panel("Pricing assumptions", _static_pricing(payload)))
+
+    present = {s.get("provider") for s in sessions}
+    caveats = "".join(
+        f'<div class="caveat"><b>{_esc(k)}:</b> {_esc(v)}</div>'
+        for k, v in (payload.get("caveats") or {}).items()
+        if k in present
+    )
+    parts.append(_panel("Provider caveats & data provenance", caveats or '<div class="muted">None.</div>'))
+
+    priv = payload.get("privacy") or {}
+    bits = [
+        "Generated locally — no data left this machine.",
+        "&#9888; raw prompts stored" if priv.get("store_raw_prompts") else "Raw prompts excluded",
+        "&#9888; raw messages stored" if priv.get("store_raw_messages") else "Raw messages excluded",
+        "Source code &amp; file contents excluded",
+        "Home directory redacted" if priv.get("redact_home_dir") else "Home directory NOT redacted",
+        "Project paths hashed" if priv.get("hash_project_paths") else "Project paths shown",
+    ]
+    parts.append(
+        '<div class="foot">Privacy: '
+        + " &middot; ".join(bits)
+        + f'<br>Generated {_esc(meta.get("generated_at"))} &middot; timezone '
+        + f'{_esc(meta.get("timezone"))} &middot; TokenBurn dashboard (static view).</div>'
+    )
+    return "".join(parts)
+
+
 def render_dashboard_html(payload: dict[str, Any]) -> str:
     data_json = json.dumps(payload, default=str)
     # Prevent the embedded JSON from prematurely closing the <script> block.
     data_json = data_json.replace("</", "<\\/")
-    return _HTML_TEMPLATE.replace("__TOKENBURN_DATA__", data_json)
+    static_html = render_static_fallback(payload)
+
+    # Single pass so a placeholder-looking string inside one substitution can
+    # never be rescanned and replaced by the other.
+    subs = {"__TOKENBURN_DATA__": data_json, "__TOKENBURN_STATIC__": static_html}
+    # A function replacement is used verbatim — no backreference expansion —
+    # so payload text containing "\1" or "\g<0>" stays literal.
+    return re.sub(
+        "__TOKENBURN_DATA__|__TOKENBURN_STATIC__",
+        lambda m: subs[m.group(0)],
+        _HTML_TEMPLATE,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +757,10 @@ th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
 .caveat b{color:var(--fg)}
 .muted{color:var(--muted)}
 svg{display:block}
+/* Progressive enhancement: [hidden] must beat the display rules above, so the
+   static view and the interactive view can never both be on screen. */
+[hidden]{display:none !important}
+.static-note{background:rgba(91,156,255,.12);border:1px solid rgba(91,156,255,.4);border-radius:8px;padding:10px 14px;margin:12px 0;font-size:13px}
 </style>
 </head>
 <body>
@@ -411,6 +770,15 @@ svg{display:block}
   <span class="estimate-note">All dollar figures are <b>API-equivalent estimates</b>, not vendor cost.</span>
 </header>
 <div class="wrap">
+  <!-- Server-rendered, visible by default. Hidden by init() once the
+       interactive view is fully built, so a blocked or broken script always
+       leaves real numbers on screen instead of an empty shell. -->
+  <div id="tb-static">
+    <div class="warn" id="tb-boot-error" hidden></div>
+    __TOKENBURN_STATIC__
+  </div>
+
+  <div id="tb-app" hidden>
   <div class="warnings" id="warnings"></div>
   <div class="cards" id="cards"></div>
 
@@ -480,6 +848,7 @@ svg{display:block}
   </div>
 
   <div class="foot" id="privacy"></div>
+  </div>
 </div>
 
 <script id="tokenburn-data" type="application/json">__TOKENBURN_DATA__</script>
@@ -853,8 +1222,30 @@ function init(){
   renderCaveats();
   renderPrivacy();
   renderAll();
+
+  // Last step, and only on success: swap the server-rendered static view for
+  // the interactive one. If anything above threw, the static view stays up.
+  document.getElementById('tb-app').hidden = false;
+  document.getElementById('tb-static').hidden = true;
 }
-init();
+
+try {
+  init();
+} catch (err) {
+  // Keep the static view visible and say why the interactive one is missing.
+  var banner = document.getElementById('tb-boot-error');
+  if (banner) {
+    banner.hidden = false;
+    banner.textContent = '⚠ The interactive dashboard failed to load (' +
+      ((err && err.message) ? err.message : String(err)) +
+      '). Showing the static view below — all totals are still correct.';
+  }
+  var app = document.getElementById('tb-app');
+  if (app) app.hidden = true;
+  var stat = document.getElementById('tb-static');
+  if (stat) stat.hidden = false;
+  throw err;
+}
 </script>
 </body>
 </html>

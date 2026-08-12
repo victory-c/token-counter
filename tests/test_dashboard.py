@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, date, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 import yaml
@@ -15,6 +16,7 @@ from tokenburn.reports.dashboard import (
     _HTML_TEMPLATE,
     build_dashboard_payload,
     render_dashboard_html,
+    render_static_fallback,
 )
 
 
@@ -140,11 +142,31 @@ def test_render_html_is_self_contained(tmp_path, tmp_app_config):
 _XSS = "</script><img src=x onerror=alert(1)>'\"&"
 
 
+class _TagCollector(HTMLParser):
+    """Collects every element the browser would actually construct.
+
+    `HTMLParser` treats <script> content as raw text, so tags that appear only
+    inside the JSON island are correctly *not* reported — which is the point:
+    this asserts on the real element tree, not on byte presence.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: list[str] = []
+
+    def handle_starttag(self, tag, attrs):  # noqa: D102
+        self.tags.append(tag)
+
+    def handle_startendtag(self, tag, attrs):  # noqa: D102
+        self.tags.append(tag)
+
+
 def test_render_neutralizes_script_breakout_from_user_data(tmp_path, tmp_app_config):
     # Log-derived fields (project path, model, session id) are attacker-
-    # influenceable. They are embedded verbatim in a <script
-    # type="application/json"> island, so the only server-side defense against
-    # them closing that tag is the "</" -> "<\/" neutralization. Lock it in.
+    # influenceable, and now reach the page through TWO sinks: the <script
+    # type="application/json"> island (defended by the "</" -> "<\/"
+    # neutralization) and the server-rendered static fallback (defended by
+    # _esc/html.escape). Lock both down.
     cfg, _ = tmp_app_config
     db = open_db(tmp_path / "t.sqlite")
     upsert_events(
@@ -161,10 +183,87 @@ def test_render_neutralizes_script_breakout_from_user_data(tmp_path, tmp_app_con
     # prematurely close the script tag; the island still parses as JSON.
     assert "</" not in island
     assert json.loads(island.replace("<\\/", "</"))["sessions"]
-    # The hostile bytes are confined to the JSON island and never appear in the
-    # surrounding HTML (where they would be a live sink).
+
+    # The hostile payload must never become a real element. Parsing the whole
+    # document is stricter than substring checks: it proves no <img> (or any
+    # other injected tag) is constructed anywhere outside the script islands.
+    collector = _TagCollector()
+    collector.feed(html)
+    assert "img" not in collector.tags
+    assert "iframe" not in collector.tags
+    # Exactly the two script islands the template declares — no third one was
+    # smuggled in by breaking out of an attribute or text node.
+    assert collector.tags.count("script") == 2
+
+    # The static fallback renders the hostile text, but inert: angle brackets
+    # and quotes are entity-escaped rather than dropped (dropping would hide
+    # data; escaping keeps it readable and safe).
     outside = html[: block.start(1)] + html[block.end(1) :]
-    assert "onerror=alert(1)" not in outside
+    assert "&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;" in outside
+    assert "<img" not in outside
+    assert "</script><img" not in outside
+
+
+def test_static_fallback_carries_real_numbers_without_js(tmp_path, tmp_app_config):
+    # The regression this guards: every panel used to be an empty div filled in
+    # by JS, so any environment that does not run scripts (preview panes,
+    # snapshot renderers, email clients, CSP-restricted viewers) showed a page
+    # of headings with no data at all.
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    _seed(db)
+    payload = build_dashboard_payload(db, _april(), cfg)
+    static = render_static_fallback(payload)
+
+    # Real aggregates, server-rendered.
+    assert "5,700" in static  # summed s1 tokens
+    assert "claude_code" in static and "cursor" in static
+    assert "$0.15" in static  # 0.12 + 0.03 API-equiv cost
+    # Session-level rows are present without any scripting.
+    assert "s1" in static and "s2" in static
+    # And it explains itself rather than looking broken.
+    assert "Static view" in static
+
+
+def test_static_view_visible_and_app_hidden_until_js_boots(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    _seed(db)
+    html = render_dashboard_html(build_dashboard_payload(db, _april(), cfg))
+
+    # Shipped state: static visible, interactive hidden.
+    assert re.search(r'<div id="tb-app" hidden>', html)
+    assert re.search(r'<div id="tb-static">', html)
+    # [hidden] must win against .cards/.grid2 display rules.
+    assert "[hidden]{display:none !important}" in html
+    # The swap happens only after init() completes, and a throw restores the
+    # static view instead of leaving a blank page.
+    assert "document.getElementById('tb-app').hidden = false;" in html
+    assert "document.getElementById('tb-static').hidden = true;" in html
+    assert "catch (err)" in html
+
+
+def test_static_fallback_escapes_log_derived_fields(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    upsert_events(
+        db,
+        [_make_event(id="x", model=_XSS, session_id=_XSS, project_path="/tmp/" + _XSS)],
+    )
+    static = render_static_fallback(build_dashboard_payload(db, _april(), cfg))
+    # No live markup survives; the raw text is preserved but entity-escaped.
+    assert "<img" not in static
+    assert "<script" not in static
+    assert "&lt;img src=x onerror=alert(1)&gt;" in static
+    assert "&quot;" in static and "&#x27;" in static
+
+
+def test_static_fallback_handles_empty_range(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    static = render_static_fallback(build_dashboard_payload(db, _april(), cfg))
+    assert "No usage events in this range." in static
+    assert "Static view" in static
 
 
 def test_user_controlled_fields_are_escaped_in_dashboard_js():
