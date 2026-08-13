@@ -327,6 +327,19 @@ def test_static_fallback_escapes_log_derived_fields(tmp_path, tmp_app_config):
     assert "&quot;" in static and "&#x27;" in static
 
 
+def test_bars_scales_to_true_peak_even_when_input_is_unsorted():
+    # _bars must be correct for ANY input, independent of whether its callers
+    # happen to sort. Asserting this only through the subscription panel would
+    # let the panel's own sort mask a broken peak.
+    from tokenburn.reports.dashboard import _bars, _fmt_compact
+
+    html = _bars([("small", 1.0), ("huge", 1000.0)], _fmt_compact, 15)
+    widths = [float(w) for w in re.findall(r"width:([0-9.]+)%", html)]
+    # 1.0 is the deliberate minimum-width floor that keeps a tiny bar visible;
+    # the peak bar is the one that must land exactly on 100%.
+    assert widths == [1.0, 100.0], f"bars not scaled to the true peak: {widths}"
+
+
 def test_bar_widths_never_exceed_full_track(tmp_path, tmp_app_config):
     # _bars used to take peak = pairs[0][1], assuming its input was sorted. The
     # subscription panel passes config-declaration order, so a low-multiple
@@ -334,16 +347,29 @@ def test_bar_widths_never_exceed_full_track(tmp_path, tmp_app_config):
     # and overflow:hidden clipped them all to "completely full", inverting the
     # ranking the panel exists to show.
     cfg, _ = tmp_app_config
-    cfg.subscriptions["cheap"] = cfg.subscriptions["claude_pro"].model_copy(
-        update={"monthly_cost_usd": 1000.0}
-    )
+    base = cfg.subscriptions["claude_pro"]
+    # Declaration order matters and must be worst-first: if the highest
+    # multiple happens to be declared first, peak is accidentally correct and
+    # the bug hides. $1000/mo (tiny multiple) is declared before $1/mo (huge).
+    cfg.subscriptions = {
+        "a_overpriced": base.model_copy(update={"monthly_cost_usd": 1000.0}),
+        "z_bargain": base.model_copy(update={"monthly_cost_usd": 1.0}),
+    }
     db = open_db(tmp_path / "t.sqlite")
     _seed(db)
-    static = render_static_fallback(build_dashboard_payload(db, _april(), cfg))
+    payload = build_dashboard_payload(db, _april(), cfg)
+    assert [s["name"] for s in payload["subscriptions"]] == ["a_overpriced", "z_bargain"], (
+        "fixture must present the low-multiple subscription first"
+    )
+    static = render_static_fallback(payload)
 
     widths = [float(w) for w in re.findall(r"width:([0-9.]+)%", static)]
     assert widths, "expected bar widths"
     assert max(widths) <= 100.0, f"bar overflows its track: {max(widths)}%"
+    # And the panel ranks best-first regardless of declaration order.
+    sub_panel = static.split("Subscription value", 1)[1].split("<h2>", 1)[0]
+    names = re.findall(r'class="lab" title="([^"]+?) \(', sub_panel)
+    assert names[0] == "z_bargain", f"subscription bars not ranked by multiple: {names}"
 
 
 def test_static_view_honours_configured_default_metric(tmp_path, tmp_app_config):
@@ -357,11 +383,16 @@ def test_static_view_honours_configured_default_metric(tmp_path, tmp_app_config)
     static = render_static_fallback(payload)
 
     assert payload["config"]["default_metric"] == "cost"
-    # cursor's 900k-token session cost $0, so a cost-ranked chart must not put
-    # it on top the way a token-ranked one would.
-    models = re.findall(r'class="lab" title="([^"]+)"', static)
-    assert models, "expected labelled bars"
-    assert models[0] != "cursor-auto"
+    # Scope to the Top models panel: reading labels across the whole page would
+    # pick up the provider bars first and pass no matter what the models panel
+    # is ranked by.
+    models_panel = static.split("Top models", 1)[1].split("<h2>", 1)[0]
+    labels = re.findall(r'class="lab" title="([^"]+)"', models_panel)
+    assert labels, "expected labelled model bars"
+    # cursor-auto has 900k tokens but cost $0, so token-ranking puts it first
+    # and cost-ranking puts the $0.15 Claude model first. The label is the
+    # discriminator between the two rankings.
+    assert labels[0] == "claude-sonnet-4", f"models not ranked by cost: {labels}"
     # Panels announce the metric they are plotting.
     assert "API-equiv $" in static
 
