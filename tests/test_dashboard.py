@@ -143,22 +143,29 @@ _XSS = "</script><img src=x onerror=alert(1)>'\"&"
 
 
 class _TagCollector(HTMLParser):
-    """Collects every element the browser would actually construct.
+    """Collects every element AND attribute the browser would actually construct.
 
     `HTMLParser` treats <script> content as raw text, so tags that appear only
     inside the JSON island are correctly *not* reported — which is the point:
     this asserts on the real element tree, not on byte presence.
+
+    Attributes matter as much as tags: the static fallback interpolates
+    log-derived text into `title="…"`, so a lost `quote=True` would break out of
+    the attribute and graft an event handler onto an *existing* element without
+    ever creating a new one. Tag-only assertions cannot see that.
     """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.tags: list[str] = []
+        self.attrs: list[tuple[str, str | None]] = []
 
     def handle_starttag(self, tag, attrs):  # noqa: D102
         self.tags.append(tag)
+        self.attrs.extend(attrs)
 
     def handle_startendtag(self, tag, attrs):  # noqa: D102
-        self.tags.append(tag)
+        self.handle_starttag(tag, attrs)
 
 
 def test_render_neutralizes_script_breakout_from_user_data(tmp_path, tmp_app_config):
@@ -171,7 +178,18 @@ def test_render_neutralizes_script_breakout_from_user_data(tmp_path, tmp_app_con
     db = open_db(tmp_path / "t.sqlite")
     upsert_events(
         db,
-        [_make_event(id="x", model=_XSS, session_id=_XSS, project_path="/tmp/" + _XSS)],
+        [
+            _make_event(
+                id="x",
+                # `provider` too: it feeds the "Top provider" card, the provider
+                # bars and the caveats panel, and it is a bare str on UsageEvent
+                # (no enum), so it is not structurally safe — only conventionally.
+                provider=_XSS,
+                model=_XSS,
+                session_id=_XSS,
+                project_path="/tmp/" + _XSS,
+            )
+        ],
     )
     payload = build_dashboard_payload(db, _april(), cfg)
     html = render_dashboard_html(payload)
@@ -195,6 +213,21 @@ def test_render_neutralizes_script_breakout_from_user_data(tmp_path, tmp_app_con
     # smuggled in by breaking out of an attribute or text node.
     assert collector.tags.count("script") == 2
 
+    # ...and no attribute was grafted onto an existing element either. This is
+    # the assertion that a lost quote= on the title attribute trips. An
+    # allowlist beats an "on*" denylist: it also catches style, href, srcdoc
+    # and formaction injections, which need no event handler to be dangerous.
+    #
+    # (Attribute VALUES legitimately contain "<" here: convert_charrefs decodes
+    # `title="&lt;img…"` back to text, which is exactly the inert outcome we
+    # want. Only the attribute *set* distinguishes safe from injected.)
+    allowed = {
+        "charset", "class", "content", "hidden", "id", "lang",
+        "name", "placeholder", "style", "title", "type", "value",
+    }
+    grafted = {name for name, _ in collector.attrs} - allowed
+    assert not grafted, f"unexpected attributes materialized: {grafted}"
+
     # The static fallback renders the hostile text, but inert: angle brackets
     # and quotes are entity-escaped rather than dropped (dropping would hide
     # data; escaping keeps it readable and safe).
@@ -202,6 +235,27 @@ def test_render_neutralizes_script_breakout_from_user_data(tmp_path, tmp_app_con
     assert "&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;" in outside
     assert "<img" not in outside
     assert "</script><img" not in outside
+
+
+def test_attribute_context_injection_is_escaped(tmp_path, tmp_app_config):
+    # The static fallback puts log-derived text inside title="…". A breakout
+    # there needs no angle bracket at all — just a quote — so it is invisible to
+    # every "<img not in html" style assertion. Guard it explicitly.
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    attr_xss = '" onmouseover="alert(1)'
+    upsert_events(
+        db,
+        [_make_event(id="a", model=attr_xss, project_path="/tmp/" + attr_xss, session_id=attr_xss)],
+    )
+    html = render_dashboard_html(build_dashboard_payload(db, _april(), cfg))
+
+    collector = _TagCollector()
+    collector.feed(html)
+    assert not [name for name, _ in collector.attrs if name.startswith("on")]
+    # The quote is entity-escaped, so the attribute value stays one value.
+    assert "&quot; onmouseover=&quot;alert(1)" in html
+    assert ' onmouseover="alert(1)"' not in html
 
 
 def test_static_fallback_carries_real_numbers_without_js(tmp_path, tmp_app_config):
@@ -243,6 +297,21 @@ def test_static_view_visible_and_app_hidden_until_js_boots(tmp_path, tmp_app_con
     assert "catch (err)" in html
 
 
+def test_every_element_the_script_looks_up_actually_exists():
+    # init() is wrapped in try/catch so a boot failure falls back to the static
+    # view instead of a blank page. That safety net also makes a *totally dead*
+    # interactive view look plausible: real numbers, small banner, and a green
+    # test suite. The cheapest thing that catches the common cause — an id
+    # renamed in the template but not in the script — is a dangling-reference
+    # check, so a careless edit fails here rather than silently downgrading
+    # every user to the static view.
+    declared = set(re.findall(r'\bid="([^"]+)"', _HTML_TEMPLATE))
+    looked_up = set(re.findall(r"getElementById\('([^']+)'\)", _HTML_TEMPLATE))
+    looked_up |= set(re.findall(r"querySelector(?:All)?\('#([A-Za-z0-9_-]+)", _HTML_TEMPLATE))
+    dangling = looked_up - declared
+    assert not dangling, f"script references ids that the template never defines: {dangling}"
+
+
 def test_static_fallback_escapes_log_derived_fields(tmp_path, tmp_app_config):
     cfg, _ = tmp_app_config
     db = open_db(tmp_path / "t.sqlite")
@@ -256,6 +325,62 @@ def test_static_fallback_escapes_log_derived_fields(tmp_path, tmp_app_config):
     assert "<script" not in static
     assert "&lt;img src=x onerror=alert(1)&gt;" in static
     assert "&quot;" in static and "&#x27;" in static
+
+
+def test_bar_widths_never_exceed_full_track(tmp_path, tmp_app_config):
+    # _bars used to take peak = pairs[0][1], assuming its input was sorted. The
+    # subscription panel passes config-declaration order, so a low-multiple
+    # subscription declared first made every other bar wider than its track --
+    # and overflow:hidden clipped them all to "completely full", inverting the
+    # ranking the panel exists to show.
+    cfg, _ = tmp_app_config
+    cfg.subscriptions["cheap"] = cfg.subscriptions["claude_pro"].model_copy(
+        update={"monthly_cost_usd": 1000.0}
+    )
+    db = open_db(tmp_path / "t.sqlite")
+    _seed(db)
+    static = render_static_fallback(build_dashboard_payload(db, _april(), cfg))
+
+    widths = [float(w) for w in re.findall(r"width:([0-9.]+)%", static)]
+    assert widths, "expected bar widths"
+    assert max(widths) <= 100.0, f"bar overflows its track: {max(widths)}%"
+
+
+def test_static_view_honours_configured_default_metric(tmp_path, tmp_app_config):
+    # Both views ship in one file; if the config says lead with cost, the static
+    # charts must not silently rank by tokens under an identical heading.
+    cfg, _ = tmp_app_config
+    cfg.dashboard.default_metric = "cost"
+    db = open_db(tmp_path / "t.sqlite")
+    _seed(db)
+    payload = build_dashboard_payload(db, _april(), cfg)
+    static = render_static_fallback(payload)
+
+    assert payload["config"]["default_metric"] == "cost"
+    # cursor's 900k-token session cost $0, so a cost-ranked chart must not put
+    # it on top the way a token-ranked one would.
+    models = re.findall(r'class="lab" title="([^"]+)"', static)
+    assert models, "expected labelled bars"
+    assert models[0] != "cursor-auto"
+    # Panels announce the metric they are plotting.
+    assert "API-equiv $" in static
+
+
+def test_static_and_js_formatters_round_alike():
+    # Python's %.2f rounds ties to even, JS toFixed/toLocaleString round them
+    # away from zero: 3.125 rendered as $3.12 statically and $3.13 interactively
+    # in the same file. Lock the JS semantics in on the Python side.
+    from tokenburn.reports.dashboard import _fmt_compact, _fmt_money
+
+    assert _fmt_money(3.125) == "$3.13"
+    assert _fmt_money(1.625) == "$1.63"
+    assert _fmt_compact(6250) == "6.3k"
+    assert _fmt_compact(1250) == "1.3k"
+    # ...without breaking the case where the stored double is really 1.00499…,
+    # which JS also rounds down.
+    assert _fmt_money(1.005) == "$1.00"
+    assert _fmt_money(-1234.5) == "-$1,234.50"
+    assert _fmt_money(0) == "$0.00"
 
 
 def test_static_fallback_handles_empty_range(tmp_path, tmp_app_config):

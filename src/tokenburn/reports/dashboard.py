@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import html as _html
 import json
+import math
 import re
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from ..config import AppConfig
@@ -358,24 +360,66 @@ def _esc(value: Any) -> str:
     return _html.escape(str(value), quote=True)
 
 
+_METRIC_LABEL = {
+    "total_tokens": "Total tokens",
+    "input_tokens": "Input",
+    "output_tokens": "Output",
+    "cache_read_tokens": "Cache read",
+    "cost": "API-equiv $",
+    "sessions": "Sessions",
+}
+
+
+def _fixed(value: Any, places: int) -> str:
+    """Format like JS `toFixed`/`toLocaleString`: ties round away from zero.
+
+    Python's `%.2f` rounds ties to even, so `3.125` renders as `$3.12` here and
+    `$3.13` in the JS view — two numbers for one value in one file. Quantizing
+    the *exact* binary value (`Decimal(float)`, not `Decimal(repr(float))`)
+    reproduces `toFixed` semantics, including the cases where the stored double
+    is really 1.00499… and JS also rounds down.
+    """
+    quantum = Decimal(1).scaleb(-places)
+    return str(Decimal(float(value or 0)).quantize(quantum, rounding="ROUND_HALF_UP"))
+
+
 def _fmt_int(n: Any) -> str:
-    return f"{round(float(n or 0)):,}"
+    # JS `Math.round` rounds .5 toward +Infinity; Python's `round` is half-even.
+    return f"{math.floor(float(n or 0) + 0.5):,}"
 
 
 def _fmt_money(n: Any) -> str:
-    return f"${float(n or 0):,.2f}"
+    whole, _, frac = _fixed(n, 2).partition(".")
+    sign = "-" if whole.startswith("-") else ""
+    return f"{sign}${abs(int(whole)):,}.{frac}"
 
 
 def _fmt_compact(n: Any) -> str:
     n = float(n or 0)
     a = abs(n)
     if a >= 1e9:
-        return f"{n / 1e9:.2f}B"
+        return _fixed(n / 1e9, 2) + "B"
     if a >= 1e6:
-        return f"{n / 1e6:.2f}M"
+        return _fixed(n / 1e6, 2) + "M"
     if a >= 1e3:
-        return f"{n / 1e3:.1f}k"
-    return str(round(n))
+        return _fixed(n / 1e3, 1) + "k"
+    return f"{math.floor(n + 0.5):d}"
+
+
+def _metric_of(payload: dict[str, Any]) -> str:
+    """The metric the interactive view boots with — the static view must match."""
+    metric = (payload.get("config") or {}).get("default_metric") or "total_tokens"
+    return metric if metric in _METRIC_LABEL else "total_tokens"
+
+
+def _metric_val(row: dict[str, Any], metric: str) -> float:
+    return 1.0 if metric == "sessions" else float(row.get(metric) or 0)
+
+
+def _fmt_metric(value: float, metric: str) -> str:
+    if metric == "cost":
+        return _fmt_money(value)
+    return _fmt_int(value) if metric == "sessions" else _fmt_compact(value)
 
 
 def _group(rows: list[dict[str, Any]], key: str, metric: str) -> list[tuple[str, float]]:
@@ -383,7 +427,7 @@ def _group(rows: list[dict[str, Any]], key: str, metric: str) -> list[tuple[str,
     fallback = "(unknown)" if key == "model" else "(none)"
     for r in rows:
         k = r.get(key) or fallback
-        out[k] = out.get(k, 0.0) + float(r.get(metric) or 0)
+        out[k] = out.get(k, 0.0) + _metric_val(r, metric)
     return sorted(out.items(), key=lambda kv: kv[1], reverse=True)
 
 
@@ -391,7 +435,10 @@ def _bars(pairs: list[tuple[str, float]], fmt, limit: int = 15) -> str:
     top = pairs[:limit]
     if not top:
         return '<div class="muted">No data.</div>'
-    peak = top[0][1] or 1
+    # Do NOT assume `pairs` is sorted: callers that pass payload-order lists
+    # (subscriptions) would otherwise scale every bar to a non-maximal peak and
+    # render widths past 100%, which `overflow:hidden` silently clips to "full".
+    peak = max((v for _, v in top), default=0.0) or 1
     out = []
     for i, (label, val) in enumerate(top):
         width = max(1.0, val / peak * 100) if peak else 0.0
@@ -440,7 +487,7 @@ def _static_cards(sessions: list[dict[str, Any]], payload: dict[str, Any]) -> st
         ("Cache read", _fmt_compact(total("cache_read_tokens"))),
         ("API-equiv cost", _fmt_money(cost)),
         ("Cash paid", _fmt_money(sub_total)),
-        ("Value multiple", f"{cost / sub_total:.2f}x" if sub_total else "&mdash;"),
+        ("Value multiple", _fixed(cost / sub_total, 2) + "x" if sub_total else "&mdash;"),
         ("Sessions", _fmt_int(len(sessions))),
         ("Providers", _fmt_int(len({s.get("provider") for s in sessions}))),
         ("Models", _fmt_int(len({s.get("model") or "(unknown)" for s in sessions}))),
@@ -455,25 +502,23 @@ def _static_cards(sessions: list[dict[str, Any]], payload: dict[str, Any]) -> st
     ) + "</div>"
 
 
-def _static_daily(sessions: list[dict[str, Any]]) -> str:
+def _static_daily(sessions: list[dict[str, Any]], metric: str = "total_tokens") -> str:
     by_day: dict[str, float] = {}
     for s in sessions:
-        by_day[s.get("date") or "?"] = by_day.get(s.get("date") or "?", 0.0) + float(
-            s.get("total_tokens") or 0
-        )
+        day = s.get("date") or "?"
+        by_day[day] = by_day.get(day, 0.0) + _metric_val(s, metric)
     if not by_day:
         return '<div class="muted">No data.</div>'
-    days = sorted(by_day)
     peak = max(by_day.values()) or 1
     out = []
-    for day in days:
+    for day in sorted(by_day):
         val = by_day[day]
         width = max(1.0, val / peak * 100)
         out.append(
             f'<div class="bar-row"><span class="lab">{_esc(day)}</span>'
             f'<span class="track"><span class="fill" style="width:{width:.2f}%;'
             f'background:var(--accent)"></span></span>'
-            f'<span class="val">{_fmt_compact(val)}</span></div>'
+            f'<span class="val">{_fmt_metric(val, metric)}</span></div>'
         )
     return "".join(out)
 
@@ -587,17 +632,25 @@ def render_static_fallback(payload: dict[str, Any]) -> str:
         )
         return "".join(parts)
 
+    # Mirror the metric the interactive view boots with, so the same file does
+    # not rank models by tokens with scripts off and by cost with them on.
+    metric = _metric_of(payload)
+    label = _METRIC_LABEL[metric]
+
+    def as_metric(v: float) -> str:
+        return _fmt_metric(v, metric)
+
     parts.append(
         '<div class="grid2">'
-        + _panel("Tokens by provider", _bars(_group(sessions, "provider", "total_tokens"), _fmt_compact, 8))
+        + _panel("Provider share", _bars(_group(sessions, "provider", metric), as_metric, 8), label)
         + _panel("Cost by provider", _bars(_group(sessions, "provider", "cost"), _fmt_money, 8), "API-equiv $")
         + "</div>"
     )
-    parts.append(_panel("Daily usage trend", _static_daily(sessions), "total tokens"))
+    parts.append(_panel("Daily usage trend", _static_daily(sessions, metric), label))
     parts.append(
         '<div class="grid2">'
-        + _panel("Top models", _bars(_group(sessions, "model", "total_tokens"), _fmt_compact))
-        + _panel("Top projects", _bars(_group(sessions, "project", "total_tokens"), _fmt_compact))
+        + _panel("Top models", _bars(_group(sessions, "model", metric), as_metric), label)
+        + _panel("Top projects", _bars(_group(sessions, "project", metric), as_metric), label)
         + "</div>"
     )
 
@@ -619,21 +672,23 @@ def render_static_fallback(payload: dict[str, Any]) -> str:
 
     subs = payload.get("subscriptions") or []
     if subs:
+        # Sorted high-to-low and never truncated, matching subsChart in the JS.
+        sub_pairs = sorted(
+            (
+                (
+                    f"{s.get('name')} ({_fmt_money(s.get('api_equiv_value_usd'))}"
+                    f" value / {_fmt_money(s.get('monthly_cost_usd'))} paid)",
+                    float(s.get("value_multiple") or 0),
+                )
+                for s in subs
+            ),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
         parts.append(
             _panel(
                 "Subscription value",
-                _bars(
-                    [
-                        (
-                            f"{s.get('name')} ({_fmt_money(s.get('api_equiv_value_usd'))}"
-                            f" value / {_fmt_money(s.get('monthly_cost_usd'))} paid)",
-                            float(s.get("value_multiple") or 0),
-                        )
-                        for s in subs
-                    ],
-                    lambda v: f"{v:.1f}x",
-                    12,
-                ),
+                _bars(sub_pairs, lambda v: _fixed(v, 1) + "x", len(sub_pairs)),
                 "API-equiv value ÷ cash paid",
             )
         )
@@ -915,7 +970,11 @@ const filtered = () => SESS.filter(passes);
 function groupSum(rows, key, metric){
   const out = new Map();
   for(const r of rows){
-    const k = (r[key]==null||r[key]==='') ? '(none)' : (key==='model'? (r[key]||'(unknown)') : r[key]);
+    // A null/empty model must read '(unknown)' — matching the model filter,
+    // the markdown report, and the static view. The old form fell through to
+    // '(none)' here while the filter listed '(unknown)', so the chart label
+    // and its own filter disagreed.
+    const k = (r[key]==null||r[key]==='') ? (key==='model'?'(unknown)':'(none)') : r[key];
     out.set(k, (out.get(k)||0) + metricVal(r, metric));
   }
   return [...out.entries()].sort((a,b)=>b[1]-a[1]);
