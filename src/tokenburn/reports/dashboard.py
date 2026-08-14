@@ -48,6 +48,9 @@ _SOFT_CONFIDENCE = {
     "unavailable",
 }
 
+# Pricing rows sort worst-first so the rows needing attention lead the table.
+_STATUS_RANK = {"missing": 0, "approximate": 1, "exact": 2}
+
 _PROVIDER_CAVEATS = {
     "claude_code": (
         "Claude Code local JSONL is the strongest source. Numbers come from the "
@@ -199,8 +202,9 @@ def build_dashboard_payload(
         if pair in seen_pairs:
             continue
         seen_pairs.add(pair)
-        price = pricing.lookup(s["provider"], model, when) if pricing else None
-        if price is not None:
+        found = pricing.match(s["provider"], model, when) if pricing else None
+        if found is not None:
+            price = found.row
             pricing_rows.append(
                 {
                     "provider": s["provider"],
@@ -211,7 +215,10 @@ def build_dashboard_payload(
                     "cache_read_per_million_usd": price.cache_read_per_million_usd,
                     "effective_date": price.effective_date.isoformat(),
                     "source_url": price.source_url,
-                    "status": "exact",
+                    "status": "approximate" if found.is_approximate else "exact",
+                    # Which table row actually supplied the rate. Only differs
+                    # from `model` when the prefix fallback fired.
+                    "priced_as": found.matched_model,
                 }
             )
         else:
@@ -226,9 +233,13 @@ def build_dashboard_payload(
                     "effective_date": None,
                     "source_url": "",
                     "status": "missing",
+                    "priced_as": None,
                 }
             )
-    pricing_rows.sort(key=lambda r: (r["status"] != "missing", r["provider"], r["model"]))
+    # Worst-first: missing, then guessed, then quoted.
+    pricing_rows.sort(
+        key=lambda r: (_STATUS_RANK.get(r["status"], 3), r["provider"], r["model"])
+    )
 
     # --- Subscription mapping (API-equivalent value vs cash paid). ---
     provider_cost: dict[str, float] = {}
@@ -283,6 +294,37 @@ def build_dashboard_payload(
         warnings.append(
             f"No list price for {len(missing_priced)} model(s): {shown}{more}. "
             "Their API-equivalent cost is counted as $0."
+        )
+
+    # A guessed rate is not a quoted one. Without this the prefix fallback is
+    # invisible: gpt-5.6-sol priced off the generic gpt-5 row for a month and
+    # understated it by ~$640, with nothing on the page hinting the number was
+    # anything but exact.
+    approx = sorted(
+        {
+            f"{r['provider']}/{r['model']} → priced as {r['priced_as']}"
+            for r in pricing_rows
+            if r["status"] == "approximate"
+        }
+    )
+    if approx:
+        shown = "; ".join(approx[:3])
+        more = f" (+{len(approx) - 3} more)" if len(approx) > 3 else ""
+        approx_cost = sum(
+            s["cost"]
+            for s in session_rows
+            if any(
+                r["status"] == "approximate"
+                and r["provider"] == s["provider"]
+                and r["model"] == (s["model"] or "(unknown)")
+                for r in pricing_rows
+            )
+        )
+        warnings.append(
+            f"{len(approx)} model(s) have no exact price row and were charged at a "
+            f"shorter-prefix rate: {shown}{more}. "
+            f"{_fmt_money(approx_cost)} of the total is estimated this way and can be "
+            "wrong in either direction — add an exact row to pricing.yaml to fix it."
         )
     if truncated:
         warnings.append(
@@ -569,11 +611,16 @@ def _static_pricing(payload: dict[str, Any]) -> str:
 
     rows = []
     for p in payload.get("pricing", []):
-        status = (
-            '<span class="tag" style="color:#f7c948;border-color:#f7c948">missing</span>'
-            if p.get("status") == "missing"
-            else '<span class="tag">exact</span>'
-        )
+        if p.get("status") == "missing":
+            status = '<span class="tag" style="color:#f7c948;border-color:#f7c948">missing</span>'
+        elif p.get("status") == "approximate":
+            status = (
+                '<span class="tag" style="color:#ff8a5b;border-color:#ff8a5b" '
+                f'title="no exact row; rate taken from {_esc(p.get("priced_as"))}">'
+                f'~ priced as {_esc(p.get("priced_as"))}</span>'
+            )
+        else:
+            status = '<span class="tag">exact</span>'
         rows.append(
             "<tr>"
             f"<td>{_esc(p.get('provider'))}</td>"
@@ -1142,7 +1189,11 @@ function renderPricing(){
   document.querySelector('#pricing-table thead').innerHTML='<tr>'+cols.map((c,i)=>`<th class="${i>=2&&i<=5?'num':''}">${c}</th>`).join('')+'</tr>';
   document.querySelector('#pricing-table tbody').innerHTML = DATA.pricing.map(p=>{
     const m = x=> x==null?'—':fmtMoney(x);
-    const stat = p.status==='missing'?'<span class="tag" style="color:#f7c948;border-color:#f7c948">missing</span>':'<span class="tag">exact</span>';
+    const stat = p.status==='missing'
+      ? '<span class="tag" style="color:#f7c948;border-color:#f7c948">missing</span>'
+      : (p.status==='approximate'
+          ? `<span class="tag" style="color:#ff8a5b;border-color:#ff8a5b" title="no exact row; rate taken from ${esc(p.priced_as)}">~ priced as ${esc(p.priced_as)}</span>`
+          : '<span class="tag">exact</span>');
     const model = p.source_url? `<a href="${esc(p.source_url)}" target="_blank" rel="noopener">${esc(p.model)}</a>`:esc(p.model);
     return `<tr><td>${esc(p.provider)}</td><td>${model}</td><td class="num">${m(p.input_per_million_usd)}</td><td class="num">${m(p.output_per_million_usd)}</td><td class="num">${m(p.cache_write_per_million_usd)}</td><td class="num">${m(p.cache_read_per_million_usd)}</td><td>${esc(p.effective_date||'—')}</td><td>${stat}</td></tr>`;
   }).join('') || '<tr><td colspan="8" class="muted">No pricing rows.</td></tr>';
