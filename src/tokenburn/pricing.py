@@ -22,6 +22,24 @@ class PriceRow:
     source_url: str
 
 
+@dataclass(frozen=True)
+class PriceMatch:
+    """A price plus how it was found.
+
+    `kind` is "exact" when the table has a row for this precise model, and
+    "prefix" when the rate came from a shorter model key that the model name
+    merely starts with — a plausible guess, not a quoted rate.
+    """
+
+    row: PriceRow
+    kind: str
+    matched_model: str
+
+    @property
+    def is_approximate(self) -> bool:
+        return self.kind == "prefix"
+
+
 class PricingTable:
     def __init__(self, rows: list[PriceRow]) -> None:
         self._by_key: dict[tuple[str, str], list[PriceRow]] = defaultdict(list)
@@ -53,19 +71,39 @@ class PricingTable:
             )
         return cls(rows)
 
-    def lookup(self, provider: str, model: str | None, when: datetime) -> PriceRow | None:
+    def match(self, provider: str, model: str | None, when: datetime) -> PriceMatch | None:
+        """Price a (provider, model) *and say how the rate was found*.
+
+        The prefix fallback is load-bearing — it keeps a brand-new model
+        variant from silently costing $0 — but it is a guess, and an unpriced
+        model and a guessed one are not the same claim. `gpt-5.6-sol` fell
+        through to the generic `gpt-5` row and was billed at $1.25/$10 instead
+        of its real $5/$30, understating a month by ~$640 while every report
+        presented the number as exact. Callers need the provenance to say so.
+        """
         if model is None:
             return None
         # Try exact (provider, model) first; fall back to model-prefix match.
-        key = (provider, self._normalize(model))
+        normalized = self._normalize(model)
+        key = (provider, normalized)
         candidates = self._by_key.get(key)
+        kind = "exact"
         if not candidates:
             candidates = self._best_prefix_match(provider, model)
+            kind = "prefix"
         if not candidates:
             return None
         target = when.date()
         applicable = [r for r in candidates if r.effective_date <= target]
-        return applicable[-1] if applicable else None
+        if not applicable:
+            return None
+        row = applicable[-1]
+        return PriceMatch(row=row, kind=kind, matched_model=row.model)
+
+    def lookup(self, provider: str, model: str | None, when: datetime) -> PriceRow | None:
+        """Rate only. Prefer `match()` when the caller reports on data quality."""
+        found = self.match(provider, model, when)
+        return found.row if found else None
 
     def _normalize(self, model: str) -> str:
         return model.lower().split("@")[0].strip()

@@ -26,6 +26,64 @@ def test_pricing_lookup_prefix_match_for_versioned_model():
     assert row.model == "claude-sonnet-4"
 
 
+def test_match_reports_whether_the_rate_was_exact_or_guessed():
+    table = PricingTable.load(default_pricing_path())
+    when = datetime(2026, 8, 15)
+
+    exact = table.match("claude_code", "claude-opus-5", when)
+    assert exact is not None
+    assert exact.kind == "exact"
+    assert not exact.is_approximate
+    assert exact.matched_model == "claude-opus-5"
+
+    guessed = table.match("claude_code", "claude-sonnet-4-5-20251029", when)
+    assert guessed is not None
+    assert guessed.kind == "prefix"
+    assert guessed.is_approximate
+    # Names the row the rate actually came from, so the report can say so.
+    assert guessed.matched_model == "claude-sonnet-4"
+
+    assert table.match("claude_code", "totally-made-up-model", when) is None
+
+
+def test_lookup_still_returns_the_row_for_existing_callers():
+    # estimate_cost and by_task depend on lookup()'s shape; match() is additive.
+    table = PricingTable.load(default_pricing_path())
+    when = datetime(2026, 8, 15)
+    for model in ("claude-opus-5", "claude-sonnet-4-5-20251029"):
+        assert table.lookup("claude_code", model, when) == table.match("claude_code", model, when).row
+    assert table.lookup("claude_code", "totally-made-up-model", when) is None
+
+
+def test_prefix_fallback_understates_a_model_priced_off_a_shorter_row():
+    """The gpt-5.6-sol regression, as data rather than prose.
+
+    A model with no exact row silently inherits a shorter key's rate. That is
+    the right default (better than $0) but it is a guess, and it was wrong by
+    4x on input here — so `match` must flag it rather than let a report present
+    the number as a quoted price.
+    """
+    table = PricingTable.load(default_pricing_path())
+    when = datetime(2026, 8, 15)
+
+    sol = table.match("codex", "gpt-5.6-sol", when)
+    assert sol is not None and sol.kind == "exact", (
+        "gpt-5.6-sol now has an exact row; if this fails the row was removed"
+    )
+
+    # An unknown sibling variant still falls back, and must be flagged.
+    unknown = table.match("codex", "gpt-5.6-nova", when)
+    assert unknown is not None, "prefix fallback should still price unknown variants"
+    assert unknown.is_approximate
+    assert unknown.matched_model != "gpt-5.6-nova"
+    # And the guess is materially wrong — the whole reason it must be surfaced.
+    assert unknown.row.input_per_million_usd < sol.row.input_per_million_usd, (
+        "expected the shorter-prefix row to be cheaper than the real gpt-5.6 rate; "
+        f"guessed {unknown.matched_model} at ${unknown.row.input_per_million_usd}/M "
+        f"vs exact ${sol.row.input_per_million_usd}/M"
+    )
+
+
 @pytest.mark.parametrize(
     ("provider", "model", "expected"),
     [

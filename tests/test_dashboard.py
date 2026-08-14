@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 from tokenburn.cli import app
 from tokenburn.db import open_db, upsert_events
 from tokenburn.models import Confidence, DateRange, UsageEvent
+from tokenburn.pricing import PricingTable, default_pricing_path
 from tokenburn.reports.dashboard import (
     _HTML_TEMPLATE,
     build_dashboard_payload,
@@ -74,6 +75,10 @@ def _april() -> DateRange:
     return DateRange(start=date(2026, 4, 1), end=date(2026, 4, 30))
 
 
+def _pricing() -> PricingTable:
+    return PricingTable.load(default_pricing_path())
+
+
 def test_payload_aggregates_sessions(tmp_path, tmp_app_config):
     cfg, _ = tmp_app_config
     db = open_db(tmp_path / "t.sqlite")
@@ -111,6 +116,50 @@ def test_payload_subscription_mapping_and_warning(tmp_path, tmp_app_config):
     # cursor session has huge token count and manual_import confidence ->
     # soft-confidence share is high, so a data-quality warning is emitted.
     assert any("estimated or manually imported" in w for w in payload["warnings"])
+
+
+def test_prefix_priced_models_are_flagged_not_presented_as_exact(tmp_path, tmp_app_config):
+    # The failure this prevents: a model with no exact row inherits a shorter
+    # key's rate and every surface reports the result as a quoted price. That
+    # understated a real month by ~$640 with nothing on the page to hint at it.
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    upsert_events(db, [_make_event(id="a", model="claude-sonnet-4-5-20251029")])
+    payload = build_dashboard_payload(db, _april(), cfg, pricing=_pricing())
+
+    row = next(r for r in payload["pricing"] if r["model"] == "claude-sonnet-4-5-20251029")
+    assert row["status"] == "approximate", "prefix-matched rate must not read as exact"
+    assert row["priced_as"] == "claude-sonnet-4"
+    # It still carries a rate — flagging it must not regress it to $0/missing.
+    assert row["input_per_million_usd"] is not None
+
+    warning = [w for w in payload["warnings"] if "shorter-prefix rate" in w]
+    assert warning, f"no approximate-pricing warning raised: {payload['warnings']}"
+    assert "claude-sonnet-4-5-20251029 → priced as claude-sonnet-4" in warning[0]
+
+
+def test_exact_priced_models_raise_no_approximation_warning(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    upsert_events(db, [_make_event(id="a", model="claude-sonnet-4")])
+    payload = build_dashboard_payload(db, _april(), cfg, pricing=_pricing())
+
+    assert all(r["status"] == "exact" for r in payload["pricing"])
+    assert not [w for w in payload["warnings"] if "shorter-prefix rate" in w]
+
+
+def test_both_views_show_the_approximate_pricing_badge(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    upsert_events(db, [_make_event(id="a", model="claude-sonnet-4-5-20251029")])
+    payload = build_dashboard_payload(db, _april(), cfg, pricing=_pricing())
+
+    # Static view renders the badge server-side...
+    static = render_static_fallback(payload)
+    assert "~ priced as claude-sonnet-4" in static
+    # ...and the interactive view has a branch for it too, so the two agree.
+    assert "p.status==='approximate'" in _HTML_TEMPLATE
+    assert "~ priced as ${esc(p.priced_as)}" in _HTML_TEMPLATE
 
 
 def test_render_html_is_self_contained(tmp_path, tmp_app_config):
