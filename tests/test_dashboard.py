@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, date, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 import yaml
@@ -15,6 +16,7 @@ from tokenburn.reports.dashboard import (
     _HTML_TEMPLATE,
     build_dashboard_payload,
     render_dashboard_html,
+    render_static_fallback,
 )
 
 
@@ -140,16 +142,54 @@ def test_render_html_is_self_contained(tmp_path, tmp_app_config):
 _XSS = "</script><img src=x onerror=alert(1)>'\"&"
 
 
+class _TagCollector(HTMLParser):
+    """Collects every element AND attribute the browser would actually construct.
+
+    `HTMLParser` treats <script> content as raw text, so tags that appear only
+    inside the JSON island are correctly *not* reported — which is the point:
+    this asserts on the real element tree, not on byte presence.
+
+    Attributes matter as much as tags: the static fallback interpolates
+    log-derived text into `title="…"`, so a lost `quote=True` would break out of
+    the attribute and graft an event handler onto an *existing* element without
+    ever creating a new one. Tag-only assertions cannot see that.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: list[str] = []
+        self.attrs: list[tuple[str, str | None]] = []
+
+    def handle_starttag(self, tag, attrs):  # noqa: D102
+        self.tags.append(tag)
+        self.attrs.extend(attrs)
+
+    def handle_startendtag(self, tag, attrs):  # noqa: D102
+        self.handle_starttag(tag, attrs)
+
+
 def test_render_neutralizes_script_breakout_from_user_data(tmp_path, tmp_app_config):
     # Log-derived fields (project path, model, session id) are attacker-
-    # influenceable. They are embedded verbatim in a <script
-    # type="application/json"> island, so the only server-side defense against
-    # them closing that tag is the "</" -> "<\/" neutralization. Lock it in.
+    # influenceable, and now reach the page through TWO sinks: the <script
+    # type="application/json"> island (defended by the "</" -> "<\/"
+    # neutralization) and the server-rendered static fallback (defended by
+    # _esc/html.escape). Lock both down.
     cfg, _ = tmp_app_config
     db = open_db(tmp_path / "t.sqlite")
     upsert_events(
         db,
-        [_make_event(id="x", model=_XSS, session_id=_XSS, project_path="/tmp/" + _XSS)],
+        [
+            _make_event(
+                id="x",
+                # `provider` too: it feeds the "Top provider" card, the provider
+                # bars and the caveats panel, and it is a bare str on UsageEvent
+                # (no enum), so it is not structurally safe — only conventionally.
+                provider=_XSS,
+                model=_XSS,
+                session_id=_XSS,
+                project_path="/tmp/" + _XSS,
+            )
+        ],
     )
     payload = build_dashboard_payload(db, _april(), cfg)
     html = render_dashboard_html(payload)
@@ -161,10 +201,225 @@ def test_render_neutralizes_script_breakout_from_user_data(tmp_path, tmp_app_con
     # prematurely close the script tag; the island still parses as JSON.
     assert "</" not in island
     assert json.loads(island.replace("<\\/", "</"))["sessions"]
-    # The hostile bytes are confined to the JSON island and never appear in the
-    # surrounding HTML (where they would be a live sink).
+
+    # The hostile payload must never become a real element. Parsing the whole
+    # document is stricter than substring checks: it proves no <img> (or any
+    # other injected tag) is constructed anywhere outside the script islands.
+    collector = _TagCollector()
+    collector.feed(html)
+    assert "img" not in collector.tags
+    assert "iframe" not in collector.tags
+    # Exactly the two script islands the template declares — no third one was
+    # smuggled in by breaking out of an attribute or text node.
+    assert collector.tags.count("script") == 2
+
+    # ...and no attribute was grafted onto an existing element either. This is
+    # the assertion that a lost quote= on the title attribute trips. An
+    # allowlist beats an "on*" denylist: it also catches style, href, srcdoc
+    # and formaction injections, which need no event handler to be dangerous.
+    #
+    # (Attribute VALUES legitimately contain "<" here: convert_charrefs decodes
+    # `title="&lt;img…"` back to text, which is exactly the inert outcome we
+    # want. Only the attribute *set* distinguishes safe from injected.)
+    allowed = {
+        "charset", "class", "content", "hidden", "id", "lang",
+        "name", "placeholder", "style", "title", "type", "value",
+    }
+    grafted = {name for name, _ in collector.attrs} - allowed
+    assert not grafted, f"unexpected attributes materialized: {grafted}"
+
+    # The static fallback renders the hostile text, but inert: angle brackets
+    # and quotes are entity-escaped rather than dropped (dropping would hide
+    # data; escaping keeps it readable and safe).
     outside = html[: block.start(1)] + html[block.end(1) :]
-    assert "onerror=alert(1)" not in outside
+    assert "&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;" in outside
+    assert "<img" not in outside
+    assert "</script><img" not in outside
+
+
+def test_attribute_context_injection_is_escaped(tmp_path, tmp_app_config):
+    # The static fallback puts log-derived text inside title="…". A breakout
+    # there needs no angle bracket at all — just a quote — so it is invisible to
+    # every "<img not in html" style assertion. Guard it explicitly.
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    attr_xss = '" onmouseover="alert(1)'
+    upsert_events(
+        db,
+        [_make_event(id="a", model=attr_xss, project_path="/tmp/" + attr_xss, session_id=attr_xss)],
+    )
+    html = render_dashboard_html(build_dashboard_payload(db, _april(), cfg))
+
+    collector = _TagCollector()
+    collector.feed(html)
+    assert not [name for name, _ in collector.attrs if name.startswith("on")]
+    # The quote is entity-escaped, so the attribute value stays one value.
+    assert "&quot; onmouseover=&quot;alert(1)" in html
+    assert ' onmouseover="alert(1)"' not in html
+
+
+def test_static_fallback_carries_real_numbers_without_js(tmp_path, tmp_app_config):
+    # The regression this guards: every panel used to be an empty div filled in
+    # by JS, so any environment that does not run scripts (preview panes,
+    # snapshot renderers, email clients, CSP-restricted viewers) showed a page
+    # of headings with no data at all.
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    _seed(db)
+    payload = build_dashboard_payload(db, _april(), cfg)
+    static = render_static_fallback(payload)
+
+    # Real aggregates, server-rendered.
+    assert "5,700" in static  # summed s1 tokens
+    assert "claude_code" in static and "cursor" in static
+    assert "$0.15" in static  # 0.12 + 0.03 API-equiv cost
+    # Session-level rows are present without any scripting.
+    assert "s1" in static and "s2" in static
+    # And it explains itself rather than looking broken.
+    assert "Static view" in static
+
+
+def test_static_view_visible_and_app_hidden_until_js_boots(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    _seed(db)
+    html = render_dashboard_html(build_dashboard_payload(db, _april(), cfg))
+
+    # Shipped state: static visible, interactive hidden.
+    assert re.search(r'<div id="tb-app" hidden>', html)
+    assert re.search(r'<div id="tb-static">', html)
+    # [hidden] must win against .cards/.grid2 display rules.
+    assert "[hidden]{display:none !important}" in html
+    # The swap happens only after init() completes, and a throw restores the
+    # static view instead of leaving a blank page.
+    assert "document.getElementById('tb-app').hidden = false;" in html
+    assert "document.getElementById('tb-static').hidden = true;" in html
+    assert "catch (err)" in html
+
+
+def test_every_element_the_script_looks_up_actually_exists():
+    # init() is wrapped in try/catch so a boot failure falls back to the static
+    # view instead of a blank page. That safety net also makes a *totally dead*
+    # interactive view look plausible: real numbers, small banner, and a green
+    # test suite. The cheapest thing that catches the common cause — an id
+    # renamed in the template but not in the script — is a dangling-reference
+    # check, so a careless edit fails here rather than silently downgrading
+    # every user to the static view.
+    declared = set(re.findall(r'\bid="([^"]+)"', _HTML_TEMPLATE))
+    looked_up = set(re.findall(r"getElementById\('([^']+)'\)", _HTML_TEMPLATE))
+    looked_up |= set(re.findall(r"querySelector(?:All)?\('#([A-Za-z0-9_-]+)", _HTML_TEMPLATE))
+    dangling = looked_up - declared
+    assert not dangling, f"script references ids that the template never defines: {dangling}"
+
+
+def test_static_fallback_escapes_log_derived_fields(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    upsert_events(
+        db,
+        [_make_event(id="x", model=_XSS, session_id=_XSS, project_path="/tmp/" + _XSS)],
+    )
+    static = render_static_fallback(build_dashboard_payload(db, _april(), cfg))
+    # No live markup survives; the raw text is preserved but entity-escaped.
+    assert "<img" not in static
+    assert "<script" not in static
+    assert "&lt;img src=x onerror=alert(1)&gt;" in static
+    assert "&quot;" in static and "&#x27;" in static
+
+
+def test_bars_scales_to_true_peak_even_when_input_is_unsorted():
+    # _bars must be correct for ANY input, independent of whether its callers
+    # happen to sort. Asserting this only through the subscription panel would
+    # let the panel's own sort mask a broken peak.
+    from tokenburn.reports.dashboard import _bars, _fmt_compact
+
+    html = _bars([("small", 1.0), ("huge", 1000.0)], _fmt_compact, 15)
+    widths = [float(w) for w in re.findall(r"width:([0-9.]+)%", html)]
+    # 1.0 is the deliberate minimum-width floor that keeps a tiny bar visible;
+    # the peak bar is the one that must land exactly on 100%.
+    assert widths == [1.0, 100.0], f"bars not scaled to the true peak: {widths}"
+
+
+def test_bar_widths_never_exceed_full_track(tmp_path, tmp_app_config):
+    # _bars used to take peak = pairs[0][1], assuming its input was sorted. The
+    # subscription panel passes config-declaration order, so a low-multiple
+    # subscription declared first made every other bar wider than its track --
+    # and overflow:hidden clipped them all to "completely full", inverting the
+    # ranking the panel exists to show.
+    cfg, _ = tmp_app_config
+    base = cfg.subscriptions["claude_pro"]
+    # Declaration order matters and must be worst-first: if the highest
+    # multiple happens to be declared first, peak is accidentally correct and
+    # the bug hides. $1000/mo (tiny multiple) is declared before $1/mo (huge).
+    cfg.subscriptions = {
+        "a_overpriced": base.model_copy(update={"monthly_cost_usd": 1000.0}),
+        "z_bargain": base.model_copy(update={"monthly_cost_usd": 1.0}),
+    }
+    db = open_db(tmp_path / "t.sqlite")
+    _seed(db)
+    payload = build_dashboard_payload(db, _april(), cfg)
+    assert [s["name"] for s in payload["subscriptions"]] == ["a_overpriced", "z_bargain"], (
+        "fixture must present the low-multiple subscription first"
+    )
+    static = render_static_fallback(payload)
+
+    widths = [float(w) for w in re.findall(r"width:([0-9.]+)%", static)]
+    assert widths, "expected bar widths"
+    assert max(widths) <= 100.0, f"bar overflows its track: {max(widths)}%"
+    # And the panel ranks best-first regardless of declaration order.
+    sub_panel = static.split("Subscription value", 1)[1].split("<h2>", 1)[0]
+    names = re.findall(r'class="lab" title="([^"]+?) \(', sub_panel)
+    assert names[0] == "z_bargain", f"subscription bars not ranked by multiple: {names}"
+
+
+def test_static_view_honours_configured_default_metric(tmp_path, tmp_app_config):
+    # Both views ship in one file; if the config says lead with cost, the static
+    # charts must not silently rank by tokens under an identical heading.
+    cfg, _ = tmp_app_config
+    cfg.dashboard.default_metric = "cost"
+    db = open_db(tmp_path / "t.sqlite")
+    _seed(db)
+    payload = build_dashboard_payload(db, _april(), cfg)
+    static = render_static_fallback(payload)
+
+    assert payload["config"]["default_metric"] == "cost"
+    # Scope to the Top models panel: reading labels across the whole page would
+    # pick up the provider bars first and pass no matter what the models panel
+    # is ranked by.
+    models_panel = static.split("Top models", 1)[1].split("<h2>", 1)[0]
+    labels = re.findall(r'class="lab" title="([^"]+)"', models_panel)
+    assert labels, "expected labelled model bars"
+    # cursor-auto has 900k tokens but cost $0, so token-ranking puts it first
+    # and cost-ranking puts the $0.15 Claude model first. The label is the
+    # discriminator between the two rankings.
+    assert labels[0] == "claude-sonnet-4", f"models not ranked by cost: {labels}"
+    # Panels announce the metric they are plotting.
+    assert "API-equiv $" in static
+
+
+def test_static_and_js_formatters_round_alike():
+    # Python's %.2f rounds ties to even, JS toFixed/toLocaleString round them
+    # away from zero: 3.125 rendered as $3.12 statically and $3.13 interactively
+    # in the same file. Lock the JS semantics in on the Python side.
+    from tokenburn.reports.dashboard import _fmt_compact, _fmt_money
+
+    assert _fmt_money(3.125) == "$3.13"
+    assert _fmt_money(1.625) == "$1.63"
+    assert _fmt_compact(6250) == "6.3k"
+    assert _fmt_compact(1250) == "1.3k"
+    # ...without breaking the case where the stored double is really 1.00499…,
+    # which JS also rounds down.
+    assert _fmt_money(1.005) == "$1.00"
+    assert _fmt_money(-1234.5) == "-$1,234.50"
+    assert _fmt_money(0) == "$0.00"
+
+
+def test_static_fallback_handles_empty_range(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    db = open_db(tmp_path / "t.sqlite")
+    static = render_static_fallback(build_dashboard_payload(db, _april(), cfg))
+    assert "No usage events in this range." in static
+    assert "Static view" in static
 
 
 def test_user_controlled_fields_are_escaped_in_dashboard_js():
