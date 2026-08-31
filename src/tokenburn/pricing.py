@@ -133,8 +133,29 @@ def estimate_cost(event: UsageEvent, table: PricingTable) -> float | None:
     return round(cost, 6)
 
 
-def default_pricing_path() -> Path:
-    """Look for pricing.yaml in source checkouts, wheels, then user config."""
+class PricingPathError(RuntimeError):
+    """A pricing table was pinned in config but is not readable."""
+
+
+def default_pricing_path(override: str | Path | None = None) -> Path:
+    """Resolve pricing.yaml: an explicit override, else checkout, wheel, home.
+
+    `override` (config `pricing.path`) wins outright. Without it the repo-root
+    copy is preferred, which means the table — and therefore every dollar
+    figure, and the costs written back to the database on the next scan — is a
+    function of whichever branch is checked out. Pinning the path is the only
+    way to make that impossible, so a pinned-but-missing path is an error
+    rather than a silent fallback to the branch-dependent copy.
+    """
+    if override:
+        pinned = Path(override).expanduser()
+        if not pinned.is_file():
+            raise PricingPathError(
+                f"pricing.path is set to {pinned}, which does not exist. "
+                "Fix the path or unset pricing.path in your config."
+            )
+        return pinned
+
     pkg_root = Path(__file__).resolve().parents[2]
     candidates = [
         pkg_root / "pricing.yaml",
