@@ -172,3 +172,50 @@ def test_estimate_cost_unknown_model_returns_none():
 def test_packaged_pricing_file_exists():
     assert default_pricing_path().exists()
     assert (Path(tokenburn.__file__).with_name("pricing.yaml")).exists()
+
+
+def test_pricing_path_override_pins_the_table(tmp_path):
+    # Without a pin, the table is resolved from the checkout — so the numbers,
+    # and the costs written back to the DB on the next scan, change with
+    # whichever branch is checked out. A real branch flip re-priced a month
+    # from $1,729 to $781 silently. Pinning must beat the checkout.
+    pinned = tmp_path / "pinned.yaml"
+    pinned.write_text(
+        "prices:\n"
+        "  - provider: codex\n"
+        "    model: only-in-pinned\n"
+        "    effective_date: 2026-01-01\n"
+        "    input_per_million_usd: 1.0\n"
+        "    output_per_million_usd: 2.0\n"
+        "    cache_write_per_million_usd: 0.0\n"
+        "    cache_read_per_million_usd: 0.1\n"
+        "    source_url: ''\n"
+    )
+    assert default_pricing_path(str(pinned)) == pinned
+    assert default_pricing_path(pinned) == pinned
+    # ...and it really is the table that gets used.
+    table = PricingTable.load(default_pricing_path(pinned))
+    assert table.lookup("codex", "only-in-pinned", datetime(2026, 8, 15)) is not None
+
+    # No override -> checkout copy, which is the branch-dependent path.
+    assert default_pricing_path() != pinned
+    assert default_pricing_path(None) != pinned
+
+
+def test_pinned_but_missing_pricing_path_fails_loudly(tmp_path):
+    # Falling back silently would reintroduce exactly the bug the pin exists to
+    # prevent: the user believes the table is pinned while costs quietly track
+    # the branch again.
+    from tokenburn.pricing import PricingPathError
+
+    missing = tmp_path / "nope.yaml"
+    with pytest.raises(PricingPathError) as exc:
+        default_pricing_path(str(missing))
+    assert "pricing.path" in str(exc.value)
+    assert str(missing) in str(exc.value)
+
+
+def test_pricing_path_defaults_to_none_in_config():
+    from tokenburn.config import PricingConfig
+
+    assert PricingConfig().path is None

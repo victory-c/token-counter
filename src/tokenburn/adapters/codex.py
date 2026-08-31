@@ -24,6 +24,67 @@ def _usage_counts(raw: dict) -> dict[str, int]:
     return {field: int(raw.get(field, 0) or 0) for field in _USAGE_FIELDS}
 
 
+def _record_model(payload: dict) -> str | None:
+    """Any model id this record advertises, wherever Codex happened to put it."""
+    if not isinstance(payload, dict):
+        return None
+    candidates = (
+        payload.get("model"),
+        (payload.get("thread_settings") or {}).get("model"),
+        (payload.get("state") or {}).get("model"),
+        ((payload.get("collaboration_mode") or {}).get("settings") or {}).get("model"),
+        ((payload.get("thread_settings") or {}).get("collaboration_mode") or {})
+        .get("settings", {})
+        .get("model"),
+    )
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _prescan_context(path: Path) -> tuple[str | None, str | None]:
+    """Find the thread's model and cwd before attributing any usage.
+
+    `turn_context` is written when a turn *starts*, but a thread forked into a
+    subagent resumes its parent's context and reports usage long before that —
+    in real logs the first turn_context lands on line 384 of 501 while
+    token_count events begin on line 5. Streaming state forward therefore
+    leaves everything up to that point with no model and no project, which
+    grouped 42.6M tokens as "(unknown)" and priced them at $0.
+
+    A rollout file is one thread on one model, so resolving both up front from
+    whichever record happens to carry them (session_meta holds cwd; the model
+    may only appear in a mid-file event_msg's thread_settings) attributes the
+    whole file. The main loop still applies later updates, so a genuine
+    mid-file change is not masked.
+    """
+    model: str | None = None
+    cwd: str | None = None
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                payload = rec.get("payload") or {}
+                if model is None:
+                    model = _record_model(payload)
+                if cwd is None and isinstance(payload, dict):
+                    value = payload.get("cwd")
+                    if isinstance(value, str) and value.strip():
+                        cwd = value.strip()
+                if model and cwd:
+                    break
+    except OSError:
+        return None, None
+    return model, cwd
+
+
 class CodexAdapter(ProviderAdapter):
     id = "codex"
     display_name = "OpenAI Codex CLI"
@@ -58,8 +119,9 @@ class CodexAdapter(ProviderAdapter):
             yield from self._parse_file(jsonl_path, range_, tz, privacy)
 
     def _parse_file(self, path: Path, range_: DateRange, tz: str, privacy) -> Iterator[UsageEvent]:
-        current_model: str | None = None
-        current_cwd: str | None = None
+        # Resolve the thread's model/cwd up front; usage can be reported long
+        # before the record that declares them. See _prescan_context.
+        current_model, current_cwd = _prescan_context(path)
         prev_usage = {field: 0 for field in _USAGE_FIELDS}
         line_no = 0
         with path.open("r", encoding="utf-8", errors="replace") as fh:

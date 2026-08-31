@@ -25,6 +25,12 @@ app = typer.Typer(help="TokenCounter — local AI coding-agent token usage audit
 console = Console()
 
 
+def _load_pricing(cfg) -> PricingTable | None:
+    """The one place the pricing table is resolved, honouring `pricing.path`."""
+    path = default_pricing_path(cfg.pricing.path)
+    return PricingTable.load(path) if path.exists() else None
+
+
 def _version_callback(value: bool) -> None:
     if value:
         console.print(f"tokencounter {__version__} (parser v{PARSER_VERSION})")
@@ -117,7 +123,7 @@ def doctor(
     open_db(db_path).close()
     table.add_row("database", "[green]ok[/green]", str(db_path))
 
-    pricing_path = default_pricing_path()
+    pricing_path = default_pricing_path(cfg.pricing.path)
     if pricing_path.exists():
         try:
             pt = PricingTable.load(pricing_path)
@@ -267,7 +273,7 @@ def _ingest(cfg: AppConfig, db, rng: DateRange, provider: str | None) -> int:
     """
     from .db import upsert_events
 
-    pricing = PricingTable.load(default_pricing_path()) if default_pricing_path().exists() else None
+    pricing = _load_pricing(cfg)
     targets = [provider] if provider else [n for n, pcfg in cfg.providers.items() if pcfg.enabled]
     total = 0
     for name in targets:
@@ -336,7 +342,7 @@ def import_cmd(
         raise typer.BadParameter(f"File not found: {path}")
     adapter = _adapter_for(provider, cfg)
     db = open_db(expand(cfg.db_path))
-    pricing = PricingTable.load(default_pricing_path()) if default_pricing_path().exists() else None
+    pricing = _load_pricing(cfg)
 
     from .adapters.base import DiscoveredSource
     src = DiscoveredSource(provider=provider, path=path, kind="manual_import", exists=True)
@@ -376,7 +382,7 @@ def export(
     if by_task:
         from .reports.by_task import build_savings, build_task_summary
         task_summary = build_task_summary(db, rng)
-        savings_summary = build_savings(db, rng)
+        savings_summary = build_savings(db, rng, pricing_path=cfg.pricing.path)
 
     if fmt == "markdown":
         from .reports.markdown import render_markdown
@@ -405,7 +411,7 @@ def _build_dashboard_html(db, rng: DateRange, cfg: AppConfig, provider_filter: s
     """Build the standalone dashboard HTML string from the DB (no re-scan)."""
     from .reports.dashboard import build_dashboard_payload, render_dashboard_html
 
-    pricing = PricingTable.load(default_pricing_path()) if default_pricing_path().exists() else None
+    pricing = _load_pricing(cfg)
     payload = build_dashboard_payload(
         db, rng, cfg, pricing=pricing, provider_filter=provider_filter
     )
@@ -532,7 +538,7 @@ def export_month(
         if by_task:
             from .reports.by_task import build_savings, build_task_summary
             task_summary = build_task_summary(db, rng, provider_filter=provider)
-            savings_summary = build_savings(db, rng)
+            savings_summary = build_savings(db, rng, pricing_path=cfg.pricing.path)
         text = render_markdown(summary, rng, cfg, task_summary=task_summary, savings_summary=savings_summary)
         md_path.write_text(text)
         md_ok = True
@@ -582,8 +588,9 @@ def classify(
         raise typer.BadParameter("provider must be 'claude_code' or 'codex' (others lack signal)")
     targets = [provider] if provider else ["claude_code", "codex"]
 
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+
     from .classifier.engine import classify_range
-    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
 
     last = {"provider": None, "task": None}
 
@@ -757,7 +764,7 @@ def savings(
     db = open_db(expand(cfg.db_path))
 
     from .reports.by_task import build_savings, render_savings
-    savings_summary = build_savings(db, rng)
+    savings_summary = build_savings(db, rng, pricing_path=cfg.pricing.path)
     render_savings(savings_summary, console)
 
 

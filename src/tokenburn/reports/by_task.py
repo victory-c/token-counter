@@ -117,10 +117,15 @@ def build_savings(
     fitness: FitnessTable | None = None,
     pricing: PricingTable | None = None,
     provider_filter: str | None = None,
+    pricing_path: str | None = None,
 ) -> dict[str, Any]:
     fitness = fitness or load_default_fitness()
-    if pricing is None and default_pricing_path().exists():
-        pricing = PricingTable.load(default_pricing_path())
+    if pricing is None:
+        # Same resolution as the CLI, so a pinned `pricing.path` is honoured
+        # here too rather than silently falling back to the checkout's copy.
+        resolved = default_pricing_path(pricing_path)
+        if resolved.exists():
+            pricing = PricingTable.load(resolved)
 
     summary = build_task_summary(db, range_, provider_filter=provider_filter)
     raw_rows = summary["raw_rows"]

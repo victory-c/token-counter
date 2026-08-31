@@ -369,6 +369,7 @@ def _iso_to_seconds(ts: str | None) -> float | None:
     try:
         # ISO 8601 with Z suffix or offset; we just want a monotone scalar.
         from datetime import datetime
+
         from dateutil import parser as dt_parser
         dt = dt_parser.isoparse(ts)
         return dt.timestamp()

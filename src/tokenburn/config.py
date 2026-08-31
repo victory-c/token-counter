@@ -23,6 +23,11 @@ class PricingConfig(BaseModel):
     mode: str = "api_equivalent"
     currency: str = "USD"
     pricing_cache_ttl_days: int = 7
+    # Explicit pricing table location. Unset, the table is resolved from the
+    # repo checkout first — which makes every cost a function of whichever
+    # branch happens to be checked out, and silently re-prices the database on
+    # the next scan. Set this to pin one table regardless of branch.
+    path: str | None = None
 
 
 class PrivacyConfig(BaseModel):
@@ -104,6 +109,7 @@ pricing:
   mode: api_equivalent
   currency: USD
   pricing_cache_ttl_days: 7
+  # path: ~/.tokenburn/pricing.yaml   # pin the table; ignores the checkout
 
 privacy:
   store_raw_prompts: false
