@@ -111,6 +111,36 @@ def test_corrected_model_rates(provider: str, model: str, expected: tuple[float,
     ) == expected
 
 
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("claude-opus-5-5", (4.0, 20.0, 5.0, 0.2)),
+        ("claude-opus-5", (5.0, 25.0, 6.25, 0.5)),
+        ("claude-fable-5-1", (10.0, 50.0, 12.5, 0.25)),
+        ("claude-mythos-5-1", (10.0, 50.0, 12.5, 0.25)),
+        # The $3/$15 increase scheduled for 2026-09-01 was cancelled.
+        ("claude-sonnet-5", (2.0, 10.0, 2.5, 0.2)),
+    ],
+)
+def test_claude_5x_rates_after_september_2026_releases(model: str, expected: tuple[float, ...]):
+    table = PricingTable.load(default_pricing_path())
+
+    match = table.match("claude_code", model, datetime(2026, 9, 26))
+
+    assert match is not None
+    # A new point release must not silently inherit its parent's rate by prefix:
+    # Opus 5.5 is 20% cheaper than Opus 5, and its cache reads are 60% cheaper.
+    assert match.kind == "exact"
+    assert match.matched_model == model
+    row = match.row
+    assert (
+        row.input_per_million_usd,
+        row.output_per_million_usd,
+        row.cache_write_per_million_usd,
+        row.cache_read_per_million_usd,
+    ) == expected
+
+
 def test_estimate_cost_handles_all_token_dimensions():
     table = PricingTable.load(default_pricing_path())
     e = UsageEvent(
