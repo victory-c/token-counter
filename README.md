@@ -1,6 +1,6 @@
 # TokenCounter
 
-Local-first CLI that audits monthly AI coding-agent token usage across Claude Code, OpenAI Codex CLI, Cursor, and Gemini. Built to answer one question: **where is my AI spend actually going, and where am I paying for the wrong model?**
+Local-first CLI that audits monthly AI coding-agent token usage across Claude Code, OpenAI Codex CLI, Cursor, and Gemini (including Google Antigravity). Built to answer one question: **where is my AI spend actually going, and where am I paying for the wrong model?**
 
 ![Right-sizing savings report](https://raw.githubusercontent.com/victory-c/token-counter/main/assets/screenshot-savings.svg)
 
@@ -110,10 +110,27 @@ classification would be guessing.
 | Codex CLI | automatic | `${CODEX_HOME:-~/.codex}/sessions/**/rollout-*.jsonl` |
 | Cursor | manual import | CSV/JSON dropped under `~/.tokenburn/imports/cursor/` |
 | Gemini | manual import | JSONL dropped under `~/.tokenburn/imports/gemini/` |
+| Antigravity (as `gemini`) | automatic | `~/.gemini/antigravity-cli/conversations/*.db` (CLI) and `~/.gemini/antigravity/conversations/*.db` (IDE) |
 
 ### Cursor CSV schema
 
 Required columns: `timestamp,model`. Recognized optional columns: `request_type, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, source, session_id, project_path`. If `model == "Auto"` the row is stored as `cursor-auto` with no underlying-model inference.
+
+### Antigravity
+
+Antigravity keeps one SQLite file per conversation. Every API response is a
+`steps` row carrying exact input / output / cache / thinking token counts,
+and each `gen_metadata` row records which model a generation used. A
+generation's usage is the sum of the response steps since the previous
+generation (usually one, more when it retried), so steps are counted and
+inherit their generation's model, and any part of a generation no step
+accounts for (a turn interrupted before its response was stored) is counted
+once as a residual. Routing labels such as `gemini-pro-default` are
+resolved to the real model from the display name Antigravity records
+("Gemini 3.1 Pro (High)" → `gemini-3.1-pro`). Workspace paths come from
+`conversation_summaries.db` where present. The protobuf layout is
+undocumented, so the field map in `src/tokenburn/adapters/gemini.py` may
+need updating when Antigravity changes it.
 
 ### Gemini JSONL schema
 
