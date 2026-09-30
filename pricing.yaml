@@ -516,6 +516,38 @@ prices:
     cache_read_per_million_usd: 0.15
     source_url: https://ai.google.dev/gemini-api/docs/pricing
 
+  # Gemini 3.1 Pro / 3.8 Flash Standard paid tier, prompts <=200k tokens,
+  # checked 2026-09-29. Long-context (>200k) surcharges and cache
+  # storage-hours are not modelled; cache writes bill as ordinary input.
+  - provider: gemini
+    model: gemini-3.1-pro
+    effective_date: 2026-02-01
+    input_per_million_usd: 2.00
+    output_per_million_usd: 12.00
+    cache_write_per_million_usd: 2.00
+    cache_read_per_million_usd: 0.20
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: gemini
+    model: gemini-3.8-flash
+    effective_date: 2026-06-01
+    input_per_million_usd: 0.75
+    output_per_million_usd: 3.75
+    cache_write_per_million_usd: 0.75
+    cache_read_per_million_usd: 0.075
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  # Google's published increase for 3.8 Flash (input, output and caching all
+  # double).
+  - provider: gemini
+    model: gemini-3.8-flash
+    effective_date: 2027-01-01
+    input_per_million_usd: 1.50
+    output_per_million_usd: 7.50
+    cache_write_per_million_usd: 1.50
+    cache_read_per_million_usd: 0.15
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
   # ---- Antigravity-routed models ----
   # Antigravity can route a request to another vendor; usage still lands in
   # the Antigravity SQLite logs, so it needs gemini-scoped rows. Same basis as
@@ -531,9 +563,12 @@ prices:
     source_url: https://docs.claude.com/en/docs/about-claude/pricing
 
   # `gemini-pro-default` and `gemini-pro-agent` are Antigravity's internal
-  # routing labels, not API model ids. The logs identify the model behind them
-  # only as MODEL_PLACEHOLDER_M16, so there is no published list price to
-  # attach. Held at zero deliberately — see the Cursor note above.
+  # routing labels, not API model ids. The adapter resolves them to the real
+  # model from the generation's display name (e.g. "Gemini 3.1 Pro (High)" ->
+  # gemini-3.1-pro). These zero rows only catch calls where no display name is
+  # recorded for that model_enum anywhere on the machine, so there is nothing
+  # to attach a published price to. Held at zero deliberately — see the Cursor
+  # note above.
   - provider: gemini
     model: gemini-pro-default
     effective_date: 2026-07-01
