@@ -180,11 +180,17 @@ class CodexAdapter(ProviderAdapter):
                 if local_date(ts, tz) < range_.start or local_date(ts, tz) > range_.end:
                     continue
 
-                input_tokens = int(delta.get("input_tokens", 0))
+                prompt_tokens = int(delta.get("input_tokens", 0))
                 cached = int(delta.get("cached_input_tokens", 0))
                 output_tokens = int(delta.get("output_tokens", 0))
                 reasoning = int(delta.get("reasoning_output_tokens", 0))
-                total = int(delta.get("total_tokens", input_tokens + output_tokens))
+                total = int(delta.get("total_tokens", prompt_tokens + output_tokens))
+                # Codex's input_tokens *includes* cached_input_tokens (OpenAI
+                # convention; total == input + output). UsageEvent.input_tokens
+                # is the uncached part, as for Claude, so storing the raw value
+                # billed every cached token at the input rate and again at the
+                # cache-read rate (~6x on real, mostly-cached rollouts).
+                input_tokens = max(prompt_tokens - cached, 0)
 
                 project, project_hash = project_identity(current_cwd, privacy)
 
