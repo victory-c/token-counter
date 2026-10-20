@@ -268,3 +268,71 @@ def test_cached_input_is_billed_once_at_the_cache_rate(tmp_path, tmp_app_config)
     # Input and cache read are now disjoint, like every other adapter's.
     for ev in events:
         assert ev.input_tokens + ev.cache_read_tokens + ev.output_tokens == ev.total_tokens
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"model": "gpt-5.4-mini"},
+        {"thread_settings": {"model": "gpt-5.4-mini"}},
+        {"state": {"model": "gpt-5.4-mini"}},
+        {"collaboration_mode": {"settings": {"model": "gpt-5.4-mini"}}},
+        {"thread_settings": {"collaboration_mode": {"settings": {"model": "gpt-5.4-mini"}}}},
+    ],
+)
+def test_model_metadata_updates_apply_in_order(tmp_path, tmp_app_config, metadata):
+    cfg, _ = tmp_app_config
+    path = tmp_path / "rollout-metadata.jsonl"
+    usage = {
+        "type": "token_count",
+        "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 10}},
+    }
+    records = [
+        {"type": "session_meta", "payload": {"cwd": "/initial", "model": "gpt-5.4"}},
+        {"type": "event_msg", "payload": usage},
+        {"type": "event_msg", "payload": {"type": "thread_meta", **metadata}},
+        {"type": "event_msg", "payload": usage},
+        {"type": "turn_context", "payload": {"model": "gpt-5.5", "cwd": "/later"}},
+        {"type": "event_msg", "payload": usage},
+    ]
+    for i, record in enumerate(records):
+        record["timestamp"] = f"2026-04-15T10:00:0{i}Z"
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    adapter = CodexAdapter(cfg, ProviderConfig(source="local_jsonl"))
+    source = DiscoveredSource(provider="codex", path=tmp_path, kind="local_rollout_dir", exists=True)
+    events = list(adapter.parse(source, DateRange(date(2026, 4, 1), date(2026, 4, 30))))
+    assert [e.model for e in events] == ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5"]
+    assert [e.project_path for e in events] == ["/initial", "/initial", "/later"]
+    # Updated attribution changes the cost: Mini is cheaper than the initial model.
+    from tokenburn.pricing import default_pricing_path
+
+    table = PricingTable.load(default_pricing_path())
+    assert estimate_cost(events[1], table) < estimate_cost(events[0], table)
+
+
+def test_malformed_metadata_does_not_abort_rollout(tmp_path, tmp_app_config):
+    cfg, _ = tmp_app_config
+    path = tmp_path / "rollout-malformed.jsonl"
+    records = [
+        [], "non-object", 123,
+        {"type": "event_msg", "payload": ["non-object"]},
+        {"type": "turn_context", "payload": {"model": 42, "cwd": []}},
+        {"type": "event_msg", "payload": {"thread_settings": "bad", "state": []}},
+        {"type": "event_msg", "payload": {"collaboration_mode": {"settings": "bad"}}},
+        {"type": "event_msg", "payload": {"thread_settings": {"collaboration_mode": "bad"}}},
+        {"type": "turn_context", "payload": {"model": "gpt-5.4", "cwd": "/valid"}},
+        {
+            "type": "event_msg", "timestamp": "2026-04-15T10:00:00Z",
+            "payload": {
+                "type": "token_count",
+                "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 10}},
+            },
+        },
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    adapter = CodexAdapter(cfg, ProviderConfig(source="local_jsonl"))
+    source = DiscoveredSource(provider="codex", path=tmp_path, kind="local_rollout_dir", exists=True)
+    events = list(adapter.parse(source, DateRange(date(2026, 4, 1), date(2026, 4, 30))))
+    assert len(events) == 1
+    assert events[0].model == "gpt-5.4"
+    assert events[0].project_path == "/valid"

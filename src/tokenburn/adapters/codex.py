@@ -28,18 +28,22 @@ def _record_model(payload: dict) -> str | None:
     """Any model id this record advertises, wherever Codex happened to put it."""
     if not isinstance(payload, dict):
         return None
-    candidates = (
-        payload.get("model"),
-        (payload.get("thread_settings") or {}).get("model"),
-        (payload.get("state") or {}).get("model"),
-        ((payload.get("collaboration_mode") or {}).get("settings") or {}).get("model"),
-        ((payload.get("thread_settings") or {}).get("collaboration_mode") or {})
-        .get("settings", {})
-        .get("model"),
+    paths = (
+        ("model",),
+        ("thread_settings", "model"),
+        ("state", "model"),
+        ("collaboration_mode", "settings", "model"),
+        ("thread_settings", "collaboration_mode", "settings", "model"),
     )
-    for value in candidates:
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    for keys in paths:
+        value = payload
+        for key in keys:
+            if not isinstance(value, dict):
+                break
+            value = value.get(key)
+        else:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     return None
 
 
@@ -53,11 +57,10 @@ def _prescan_context(path: Path) -> tuple[str | None, str | None]:
     leaves everything up to that point with no model and no project, which
     grouped 42.6M tokens as "(unknown)" and priced them at $0.
 
-    A rollout file is one thread on one model, so resolving both up front from
-    whichever record happens to carry them (session_meta holds cwd; the model
-    may only appear in a mid-file event_msg's thread_settings) attributes the
-    whole file. The main loop still applies later updates, so a genuine
-    mid-file change is not masked.
+    Resolve the first available context up front (session_meta holds cwd;
+    the model may only appear in a mid-file event_msg's thread_settings).
+    The main loop then applies metadata updates in order, including model
+    switches advertised outside turn_context.
     """
     model: str | None = None
     cwd: str | None = None
@@ -70,6 +73,8 @@ def _prescan_context(path: Path) -> tuple[str | None, str | None]:
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                if not isinstance(rec, dict):
                     continue
                 payload = rec.get("payload") or {}
                 if model is None:
@@ -134,13 +139,20 @@ class CodexAdapter(ProviderAdapter):
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(rec, dict):
+                    continue
                 rtype = rec.get("type")
                 payload = rec.get("payload") or {}
-
-                if rtype == "turn_context":
-                    current_model = payload.get("model") or current_model
-                    current_cwd = payload.get("cwd") or current_cwd
+                if not isinstance(payload, dict):
                     continue
+
+                # Metadata can announce a model change without turn_context.
+                # Apply it before attributing this record's usage and keep it
+                # for subsequent records; the prescan only seeds early usage.
+                current_model = _record_model(payload) or current_model
+                cwd = payload.get("cwd")
+                if isinstance(cwd, str) and cwd.strip():
+                    current_cwd = cwd.strip()
 
                 if rtype != "event_msg":
                     continue
