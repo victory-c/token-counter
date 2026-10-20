@@ -92,3 +92,12 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM"]
 ignore = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Typer declarations are metadata, intentionally evaluated in CLI defaults.
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
+[tool.ruff.lint.per-file-ignores]
+# StrEnum changes str(member); preserve the existing public enum behavior.
+"src/tokenburn/models.py" = ["UP042"]
+"src/tokenburn/classifier/taxonomy.py" = ["UP042"]

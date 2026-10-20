@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: Lint
+        run: uv run --frozen ruff check .
+      - name: Test
+        run: uv run --frozen pytest
+      - name: Build distributions
+        run: uv build
+      - name: Install wheel and smoke-test packaged data
+        run: |
+          uv venv /tmp/token-counter-wheel
+          uv pip install --python /tmp/token-counter-wheel/bin/python dist/*.whl
+          cd /tmp
+          /tmp/token-counter-wheel/bin/tokencounter --version
+          /tmp/token-counter-wheel/bin/tokencounter --help
+          /tmp/token-counter-wheel/bin/tokenburn --version
+          /tmp/token-counter-wheel/bin/python - <<'PY'
+          from datetime import datetime
+          from tokenburn.classifier.fitness import load_default
+          from tokenburn.pricing import PricingTable, default_pricing_path
+
+          assert load_default().class_of("claude-sonnet-4") == "medium"
+          table = PricingTable.load(default_pricing_path())
+          assert table.lookup("codex", "gpt-5.4", datetime(2026, 4, 15)) is not None
+          PY
