@@ -249,3 +249,67 @@ def test_pricing_path_defaults_to_none_in_config():
     from tokenburn.config import PricingConfig
 
     assert PricingConfig().path is None
+
+
+@pytest.mark.parametrize("provider", ["codex", "cursor", "claude_code"])
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("gpt-6-astra", (10.0, 50.0, 12.5, 1.0)),
+        ("gpt-6.1-sol", (2.0, 10.0, 2.5, 0.1)),
+        ("gpt-6-sol", (2.0, 10.0, 2.5, 0.2)),
+        ("gpt-6-luna", (0.1, 0.5, 0.125, 0.01)),
+        ("gpt-5.6-sol", (4.0, 20.0, 5.0, 0.4)),
+        ("gpt-5.6-terra", (2.0, 12.0, 2.5, 0.2)),
+        ("gpt-5.6-luna", (0.2, 1.2, 0.25, 0.02)),
+    ],
+)
+def test_verified_openai_rates(provider, model, expected):
+    table = PricingTable.load(default_pricing_path())
+    match = table.match(provider, model, datetime(2026, 10, 20))
+    assert match is not None and match.kind == "exact"
+    row = match.row
+    assert (
+        row.input_per_million_usd, row.output_per_million_usd,
+        row.cache_write_per_million_usd, row.cache_read_per_million_usd,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "before", "after", "early", "late"),
+    [
+        ("codex", "gpt-5.6-sol", "2026-10-19", "2026-10-20", 5.0, 4.0),
+        ("codex", "gpt-5.6-terra", "2026-10-19", "2026-10-20", 2.5, 2.0),
+        ("gemini", "gemini-3.6-flash", "2026-12-31", "2027-01-01", 0.75, 1.5),
+        ("gemini", "gemini-4-argon", "2026-11-30", "2026-12-01", 2.0, 4.0),
+        ("cursor", "gemini-4-argon", "2026-11-30", "2026-12-01", 2.0, 4.0),
+    ],
+)
+def test_verified_rates_preserve_date_boundaries(provider, model, before, after, early, late):
+    table = PricingTable.load(default_pricing_path())
+    assert table.lookup(provider, model, datetime.fromisoformat(before)).input_per_million_usd == early
+    assert table.lookup(provider, model, datetime.fromisoformat(after)).input_per_million_usd == late
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "expected"),
+    [
+        ("claude_code", "claude-sonnet-5-5", (2.0, 10.0, 2.5, 0.1)),
+        ("claude_code", "claude-haiku-5-5", (0.1, 0.5, 0.125, 0.01)),
+        ("cursor", "composer-2.5", (0.5, 2.5, 0.0, 0.2)),
+        ("cursor", "composer-2.5-fast", (3.0, 15.0, 0.0, 0.5)),
+        ("cursor", "claude-4.6-opus-high-thinking", (5.0, 25.0, 6.25, 0.5)),
+        ("cursor", "gemini-3.1-pro-preview", (2.0, 12.0, 2.0, 0.2)),
+        ("gemini", "gemini-3.6-flash", (0.75, 3.75, 0.75, 0.075)),
+        ("gemini", "gemini-4-argon", (2.0, 10.0, 0.0, 0.1)),
+    ],
+)
+def test_verified_claude_cursor_and_gemini_rates(provider, model, expected):
+    table = PricingTable.load(default_pricing_path())
+    match = table.match(provider, model, datetime(2026, 10, 20))
+    assert match is not None and match.kind == "exact"
+    row = match.row
+    assert (
+        row.input_per_million_usd, row.output_per_million_usd,
+        row.cache_write_per_million_usd, row.cache_read_per_million_usd,
+    ) == expected

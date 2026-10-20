@@ -586,3 +586,379 @@ prices:
     cache_write_per_million_usd: 0.0
     cache_read_per_million_usd: 0.0
     source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  # ---------------- Verified 2026-10-20 ----------------
+  # Standard API-equivalent rates. The verification date is the baseline for
+  # these rows, NOT a claim about launch dates or when a price first changed.
+  # Earlier rows are preserved for historical reports. See docs/pricing.md.
+  # GPT-5.6 Sol's promotional end date is not a confirmed future price change.
+  # Gemini 4 Argon supports implicit cache reads only (no cache writes).
+
+  - provider: codex
+    model: gpt-6-astra
+    effective_date: 2026-10-20
+    input_per_million_usd: 10.0
+    output_per_million_usd: 50.0
+    cache_write_per_million_usd: 12.5
+    cache_read_per_million_usd: 1.0
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: codex
+    model: gpt-6.1-sol
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.1
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: codex
+    model: gpt-6-sol
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.2
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: codex
+    model: gpt-6-luna
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.1
+    output_per_million_usd: 0.5
+    cache_write_per_million_usd: 0.125
+    cache_read_per_million_usd: 0.01
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: codex
+    model: gpt-5.6-sol
+    effective_date: 2026-10-20
+    input_per_million_usd: 4.0
+    output_per_million_usd: 20.0
+    cache_write_per_million_usd: 5.0
+    cache_read_per_million_usd: 0.4
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: codex
+    model: gpt-5.6-terra
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 12.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.2
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: codex
+    model: gpt-5.6-luna
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.2
+    output_per_million_usd: 1.2
+    cache_write_per_million_usd: 0.25
+    cache_read_per_million_usd: 0.02
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: cursor
+    model: gpt-6-astra
+    effective_date: 2026-10-20
+    input_per_million_usd: 10.0
+    output_per_million_usd: 50.0
+    cache_write_per_million_usd: 12.5
+    cache_read_per_million_usd: 1.0
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: cursor
+    model: gpt-6.1-sol
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.1
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: cursor
+    model: gpt-6-sol
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.2
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: cursor
+    model: gpt-6-luna
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.1
+    output_per_million_usd: 0.5
+    cache_write_per_million_usd: 0.125
+    cache_read_per_million_usd: 0.01
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: cursor
+    model: gpt-5.6-sol
+    effective_date: 2026-10-20
+    input_per_million_usd: 4.0
+    output_per_million_usd: 20.0
+    cache_write_per_million_usd: 5.0
+    cache_read_per_million_usd: 0.4
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: cursor
+    model: gpt-5.6-terra
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 12.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.2
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: cursor
+    model: gpt-5.6-luna
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.2
+    output_per_million_usd: 1.2
+    cache_write_per_million_usd: 0.25
+    cache_read_per_million_usd: 0.02
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: claude_code
+    model: gpt-6-astra
+    effective_date: 2026-10-20
+    input_per_million_usd: 10.0
+    output_per_million_usd: 50.0
+    cache_write_per_million_usd: 12.5
+    cache_read_per_million_usd: 1.0
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: claude_code
+    model: gpt-6.1-sol
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.1
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: claude_code
+    model: gpt-6-sol
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.2
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: claude_code
+    model: gpt-6-luna
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.1
+    output_per_million_usd: 0.5
+    cache_write_per_million_usd: 0.125
+    cache_read_per_million_usd: 0.01
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: claude_code
+    model: gpt-5.6-sol
+    effective_date: 2026-10-20
+    input_per_million_usd: 4.0
+    output_per_million_usd: 20.0
+    cache_write_per_million_usd: 5.0
+    cache_read_per_million_usd: 0.4
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: claude_code
+    model: gpt-5.6-terra
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 12.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.2
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: claude_code
+    model: gpt-5.6-luna
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.2
+    output_per_million_usd: 1.2
+    cache_write_per_million_usd: 0.25
+    cache_read_per_million_usd: 0.02
+    source_url: https://developers.openai.com/api/docs/pricing
+
+  - provider: claude_code
+    model: claude-sonnet-5-5
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.1
+    source_url: https://platform.claude.com/docs/en/about-claude/pricing
+
+  - provider: claude_code
+    model: claude-haiku-5-5
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.1
+    output_per_million_usd: 0.5
+    cache_write_per_million_usd: 0.125
+    cache_read_per_million_usd: 0.01
+    source_url: https://platform.claude.com/docs/en/about-claude/pricing
+
+  - provider: cursor
+    model: claude-sonnet-5-5
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 2.5
+    cache_read_per_million_usd: 0.1
+    source_url: https://platform.claude.com/docs/en/about-claude/pricing
+
+  - provider: cursor
+    model: claude-haiku-5-5
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.1
+    output_per_million_usd: 0.5
+    cache_write_per_million_usd: 0.125
+    cache_read_per_million_usd: 0.01
+    source_url: https://platform.claude.com/docs/en/about-claude/pricing
+
+  - provider: cursor
+    model: claude-opus-5-5
+    effective_date: 2026-10-20
+    input_per_million_usd: 4.0
+    output_per_million_usd: 20.0
+    cache_write_per_million_usd: 5.0
+    cache_read_per_million_usd: 0.2
+    source_url: https://platform.claude.com/docs/en/about-claude/pricing
+
+  - provider: cursor
+    model: claude-fable-5-1
+    effective_date: 2026-10-20
+    input_per_million_usd: 10.0
+    output_per_million_usd: 50.0
+    cache_write_per_million_usd: 12.5
+    cache_read_per_million_usd: 0.25
+    source_url: https://platform.claude.com/docs/en/about-claude/pricing
+
+  - provider: cursor
+    model: claude-4.5-opus-high-thinking
+    effective_date: 2026-10-20
+    input_per_million_usd: 5.0
+    output_per_million_usd: 25.0
+    cache_write_per_million_usd: 6.25
+    cache_read_per_million_usd: 0.5
+    source_url: https://platform.claude.com/docs/en/about-claude/pricing
+
+  - provider: cursor
+    model: claude-4.6-opus-high-thinking
+    effective_date: 2026-10-20
+    input_per_million_usd: 5.0
+    output_per_million_usd: 25.0
+    cache_write_per_million_usd: 6.25
+    cache_read_per_million_usd: 0.5
+    source_url: https://platform.claude.com/docs/en/about-claude/pricing
+
+  - provider: cursor
+    model: claude-opus-4-7-thinking-xhigh
+    effective_date: 2026-10-20
+    input_per_million_usd: 5.0
+    output_per_million_usd: 25.0
+    cache_write_per_million_usd: 6.25
+    cache_read_per_million_usd: 0.5
+    source_url: https://platform.claude.com/docs/en/about-claude/pricing
+
+  - provider: cursor
+    model: composer-2.5
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.5
+    output_per_million_usd: 2.5
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.2
+    source_url: https://cursor.com/docs/models-and-pricing
+
+  - provider: cursor
+    model: composer-2.5-fast
+    effective_date: 2026-10-20
+    input_per_million_usd: 3.0
+    output_per_million_usd: 15.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.5
+    source_url: https://cursor.com/docs/models-and-pricing
+
+  - provider: cursor
+    model: gemini-3.1-pro-preview
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 12.0
+    cache_write_per_million_usd: 2.0
+    cache_read_per_million_usd: 0.2
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: gemini
+    model: gemini-4-argon
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.1
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: gemini
+    model: gemini-4-argon
+    effective_date: 2026-12-01
+    input_per_million_usd: 4.0
+    output_per_million_usd: 20.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.2
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: cursor
+    model: gemini-4-argon
+    effective_date: 2026-10-20
+    input_per_million_usd: 2.0
+    output_per_million_usd: 10.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.1
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: cursor
+    model: gemini-4-argon
+    effective_date: 2026-12-01
+    input_per_million_usd: 4.0
+    output_per_million_usd: 20.0
+    cache_write_per_million_usd: 0.0
+    cache_read_per_million_usd: 0.2
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: gemini
+    model: gemini-3.6-flash
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.75
+    output_per_million_usd: 3.75
+    cache_write_per_million_usd: 0.75
+    cache_read_per_million_usd: 0.075
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: gemini
+    model: gemini-3.6-flash
+    effective_date: 2027-01-01
+    input_per_million_usd: 1.5
+    output_per_million_usd: 7.5
+    cache_write_per_million_usd: 1.5
+    cache_read_per_million_usd: 0.15
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: gemini
+    model: gemini-3.6-flash-high
+    effective_date: 2026-10-20
+    input_per_million_usd: 0.75
+    output_per_million_usd: 3.75
+    cache_write_per_million_usd: 0.75
+    cache_read_per_million_usd: 0.075
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: gemini
+    model: gemini-3.6-flash-high
+    effective_date: 2027-01-01
+    input_per_million_usd: 1.5
+    output_per_million_usd: 7.5
+    cache_write_per_million_usd: 1.5
+    cache_read_per_million_usd: 0.15
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
