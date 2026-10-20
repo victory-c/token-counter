@@ -159,9 +159,9 @@ Compares native-parser totals to `ccusage daily --json` and warns if delta > 5%.
 ```bash
 git clone https://github.com/victory-c/token-counter
 cd token-counter
-uv venv --python 3.12
-uv pip install -e ".[dev]"
-uv run pytest                            # 57 tests
+uv sync --frozen --extra dev
+uv run --frozen ruff check .
+uv run --frozen pytest
 uv run tokencounter --help
 ```
 

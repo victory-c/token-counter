@@ -28,7 +28,7 @@ class FitnessTable:
     fitness: dict[str, FitnessRule]                  # task_category -> rule
 
     @classmethod
-    def load(cls, classes_path: Path, fitness_path: Path) -> "FitnessTable":
+    def load(cls, classes_path: Path, fitness_path: Path) -> FitnessTable:
         with classes_path.open() as f:
             mc = yaml.safe_load(f) or {}
         with fitness_path.open() as f:
