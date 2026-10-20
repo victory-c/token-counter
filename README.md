@@ -138,7 +138,7 @@ One record per line with `timestamp`, `model`, and `usageMetadata` shaped like t
 
 ## Pricing
 
-`pricing.yaml` ships with public list prices keyed by `(provider, model, effective_date)`. Lookup picks the latest row whose `effective_date <= event timestamp`. Update this file when a vendor changes prices; each row carries a `source_url` for auditability.
+`pricing.yaml` ships with public list prices keyed by `(provider, model, effective_date)`. Lookup picks the latest row whose `effective_date <= event timestamp`. Update this file when a vendor changes prices; each row carries a `source_url` for auditability. See [pricing maintenance notes](docs/pricing.md) for the latest source review, date policy, and context-tier limitations.
 
 ## Privacy
 
