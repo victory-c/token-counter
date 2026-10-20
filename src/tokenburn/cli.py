@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import UTC
 from pathlib import Path
 
 import typer
@@ -660,14 +661,14 @@ def override(
     if category not in valid:
         raise typer.BadParameter(f"category must be one of: {sorted(valid)}")
 
-    from datetime import datetime, timezone
+    from datetime import datetime
     db["session_overrides"].insert(
         {
             "session_id": session,
             "provider": provider,
             "task_category": category,
             "note": note or "",
-            "set_at": datetime.now(timezone.utc).isoformat(),
+            "set_at": datetime.now(UTC).isoformat(),
         },
         pk=("session_id", "provider"),
         replace=True,
