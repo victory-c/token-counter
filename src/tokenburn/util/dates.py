@@ -15,10 +15,7 @@ def month_range(month: str, tz: str = "UTC") -> DateRange:
         raise ValueError(f"Expected YYYY-MM, got {month!r}")
     year, mon = int(parts[0]), int(parts[1])
     start = date(year, mon, 1)
-    if mon == 12:
-        end = date(year, 12, 31)
-    else:
-        end = date(year, mon + 1, 1) - timedelta(days=1)
+    end = date(year, 12, 31) if mon == 12 else date(year, mon + 1, 1) - timedelta(days=1)
     return DateRange(start=start, end=end)
 
 
